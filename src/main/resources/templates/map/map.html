@@ -22,7 +22,6 @@
         { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
       );
 
-      // 현재 위치 감지
       if (navigator.geolocation) {
         navigator.geolocation.watchPosition(function(pos) {
           var current = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
@@ -36,13 +35,11 @@
         });
       }
 
-      // 마커 이미지 정의
       var imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png',
           imageSize = new kakao.maps.Size(64, 69),
           imageOpt  = { offset: new kakao.maps.Point(27, 69) },
           markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
 
-      // 열려 있는 InfoWindow 추적 변수
       let openInfoWindow = null;
       let openMarker = null;
 
@@ -62,8 +59,16 @@
               image: markerImg
             });
 
+            // ✅ 자동 줄바꿈 및 가로 길이 제한 설정
             var content = `
-              <div style="padding:8px; font-size:14px;">
+              <div style="
+                padding: 8px;
+                font-size: 14px;
+                max-width: 250px;
+                word-break: break-word;
+                overflow-wrap: break-word;
+                box-sizing: border-box;
+              ">
                 <strong>${t.contsName}</strong><br>
                 도로명: ${t.addrNew}<br>
                 지번: ${t.addrOld}
@@ -74,15 +79,14 @@
               content: content
             });
 
-            // 마커 클릭 시 InfoWindow 열기/닫기 토글
+            // InfoWindow 토글 기능
             kakao.maps.event.addListener(marker, 'click', function() {
-              // 이미 열린 InfoWindow이고 동일 마커를 다시 클릭한 경우 → 닫기
               if (openInfoWindow && openMarker === marker) {
                 openInfoWindow.close();
                 openInfoWindow = null;
                 openMarker = null;
               } else {
-                if (openInfoWindow) openInfoWindow.close(); // 기존 열려 있던 창 닫기
+                if (openInfoWindow) openInfoWindow.close();
                 infoWindow.open(map, marker);
                 openInfoWindow = infoWindow;
                 openMarker = marker;

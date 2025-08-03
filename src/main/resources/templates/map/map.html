@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Toilet Map</title>
-    <!-- 1) 카카오 SDK: Thymeleaf URL 문법으로 appkey 주입 -->
+
+    <!-- Kakao Maps SDK -->
     <script th:src="@{'https://dapi.kakao.com/v2/maps/sdk.js'
-                    + '?appkey=' + ${kakaoApiKey}
-                    + '&libraries=services&autoload=false'}">
+                  + '?appkey=' + ${kakaoApiKey}
+                  + '&libraries=services&autoload=false'}">
     </script>
 </head>
 <body>
@@ -15,57 +16,84 @@
 
 <script th:inline="javascript">
     /*<![CDATA[*/
-      kakao.maps.load(function() {
-        // 2) 지도 생성 (기본 좌표: 서울시청)
-        var map = new kakao.maps.Map(
-          document.getElementById('map'),
-          { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
-        );
+    kakao.maps.load(function() {
+      var map = new kakao.maps.Map(
+        document.getElementById('map'),
+        { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
+      );
 
-        // 3) 내 위치 감지: 지도 중심만 이동 (마커는 표시 안 함)
-        if (navigator.geolocation) {
-          navigator.geolocation.watchPosition(function(pos) {
-            var current = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-            map.setCenter(current);
-          }, function(err) {
-            console.error('Geolocation error:', err);
-          }, {
-            enableHighAccuracy: true,
-            maximumAge: 30000,
-            timeout: 27000
-          });
-        }
+      // 현재 위치 감지
+      if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(function(pos) {
+          var current = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+          map.setCenter(current);
+        }, function(err) {
+          console.error('Geolocation error:', err);
+        }, {
+          enableHighAccuracy: true,
+          maximumAge: 30000,
+          timeout: 27000
+        });
+      }
 
-        // 4) 마커 이미지 생성
-        var imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png',
-            imageSize = new kakao.maps.Size(64, 69),
-            imageOpt  = { offset: new kakao.maps.Point(27, 69) },
-            markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
+      // 마커 이미지 정의
+      var imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png',
+          imageSize = new kakao.maps.Size(64, 69),
+          imageOpt  = { offset: new kakao.maps.Point(27, 69) },
+          markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
 
-        // 5) DB에서 꺼낸 화장실 데이터 가져와 마커 표시
-        fetch(/*[[@{/toilets}]]*/)
-          .then(function(res) {
-            if (!res.ok) throw new Error('API 에러: ' + res.status);
-            return res.json();
-          })
-          .then(function(toilets) {
-            console.log('▶️ toilets JSON →', toilets);
-            toilets.forEach(function(t) {
-              // coordY: 위도, coordX: 경도 (camelCase 프로퍼티 가정)
-              var lat = t.coordY;
-              var lng = t.coordX;
+      // 열려 있는 InfoWindow 추적 변수
+      let openInfoWindow = null;
+      let openMarker = null;
 
-              new kakao.maps.Marker({
-                map: map,
-                position: new kakao.maps.LatLng(lat, lng),
-                image: markerImg
-              });
+      fetch(/*[[@{/toilets}]]*/)
+        .then(function(res) {
+          if (!res.ok) throw new Error('API 에러: ' + res.status);
+          return res.json();
+        })
+        .then(function(toilets) {
+          toilets.forEach(function(t) {
+            var lat = t.coordY;
+            var lng = t.coordX;
+
+            var marker = new kakao.maps.Marker({
+              map: map,
+              position: new kakao.maps.LatLng(lat, lng),
+              image: markerImg
             });
-          })
-          .catch(function(e) {
-            console.error('데이터 로드 실패:', e);
+
+            var content = `
+              <div style="padding:8px; font-size:14px;">
+                <strong>${t.contsName}</strong><br>
+                도로명: ${t.addrNew}<br>
+                지번: ${t.addrOld}
+              </div>
+            `;
+
+            var infoWindow = new kakao.maps.InfoWindow({
+              content: content
+            });
+
+            // 마커 클릭 시 InfoWindow 열기/닫기 토글
+            kakao.maps.event.addListener(marker, 'click', function() {
+              // 이미 열린 InfoWindow이고 동일 마커를 다시 클릭한 경우 → 닫기
+              if (openInfoWindow && openMarker === marker) {
+                openInfoWindow.close();
+                openInfoWindow = null;
+                openMarker = null;
+              } else {
+                if (openInfoWindow) openInfoWindow.close(); // 기존 열려 있던 창 닫기
+                infoWindow.open(map, marker);
+                openInfoWindow = infoWindow;
+                openMarker = marker;
+              }
+            });
           });
-      });
+        })
+        .catch(function(e) {
+          console.error('데이터 로드 실패:', e);
+        });
+    });
     /*]]>*/
 </script>
 </body>

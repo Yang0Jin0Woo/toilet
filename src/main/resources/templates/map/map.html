@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Toilet Map</title>
 
-    <!-- Kakao Maps SDK -->
+    <!-- Kakao Maps SDK (autoload=false 로드 제어) -->
     <script th:src="@{'https://dapi.kakao.com/v2/maps/sdk.js'
-                  + '?appkey=' + ${kakaoApiKey}
-                  + '&libraries=services&autoload=false'}">
+                + '?appkey=' + ${kakaoApiKey}
+                + '&libraries=services&autoload=false'}">
     </script>
 </head>
 <body>
@@ -17,86 +17,105 @@
 <script th:inline="javascript">
     /*<![CDATA[*/
     kakao.maps.load(function() {
-      var map = new kakao.maps.Map(
+      // 1) 지도 생성
+      const map = new kakao.maps.Map(
         document.getElementById('map'),
         { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
       );
 
+      // 2) 현재 위치 추적 (선택)
       if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(function(pos) {
-          var current = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-          map.setCenter(current);
-        }, function(err) {
-          console.error('Geolocation error:', err);
-        }, {
+        navigator.geolocation.watchPosition(pos => {
+          map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude));
+        }, console.error, {
           enableHighAccuracy: true,
           maximumAge: 30000,
           timeout: 27000
         });
       }
 
-      var imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png',
-          imageSize = new kakao.maps.Size(64, 69),
-          imageOpt  = { offset: new kakao.maps.Point(27, 69) },
-          markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
+      // 3) 마커 이미지 설정
+      const imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
+      const imageSize = new kakao.maps.Size(64, 69);
+      const imageOpt  = { offset: new kakao.maps.Point(27, 69) };
+      const markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
 
+      // 열려 있는 InfoWindow 추적 변수
       let openInfoWindow = null;
-      let openMarker = null;
+      let openMarker     = null;
 
+      // 4) REST API로부터 화장실 데이터 로드
       fetch(/*[[@{/toilets}]]*/)
-        .then(function(res) {
+        .then(res => {
           if (!res.ok) throw new Error('API 에러: ' + res.status);
           return res.json();
         })
-        .then(function(toilets) {
-          toilets.forEach(function(t) {
-            var lat = t.coordY;
-            var lng = t.coordX;
+        .then(toilets => {
+          toilets.forEach(t => {
+            // 마커 좌표 (Y: 위도, X: 경도)
+            const position = new kakao.maps.LatLng(t.coordY, t.coordX);
 
-            var marker = new kakao.maps.Marker({
-              map: map,
-              position: new kakao.maps.LatLng(lat, lng),
-              image: markerImg
-            });
+            // 마커 생성
+            const marker = new kakao.maps.Marker({ map, position, image: markerImg });
 
-            // ✅ 자동 줄바꿈 및 가로 길이 제한 설정
-            var content = `
-              <div style="
-                padding: 8px;
-                font-size: 14px;
-                max-width: 250px;
-                word-break: break-word;
-                overflow-wrap: break-word;
-                box-sizing: border-box;
+            // InfoWindow 내부 콘텐츠 (max-height + scroll)
+            const content = `
+              <div class="draggable-iw" style="
+                padding:8px;
+                font-size:14px;
+                max-width:250px;
+                max-height:180px;    /* 최대 높이 설정 */
+                overflow-y:auto;     /* 넘칠 때 내부 스크롤 */
+                word-break:break-word;
+                overflow-wrap:break-word;
+                box-sizing:border-box;
+                cursor: move;
               ">
                 <strong>${t.contsName}</strong><br>
                 도로명: ${t.addrNew}<br>
                 지번: ${t.addrOld}
               </div>
             `;
+            const infoWindow = new kakao.maps.InfoWindow({ content });
 
-            var infoWindow = new kakao.maps.InfoWindow({
-              content: content
-            });
-
-            // InfoWindow 토글 기능
+            // 마커 클릭 이벤트: 토글 + 패닝 + wrapper 높이 동기화
             kakao.maps.event.addListener(marker, 'click', function() {
+              // 같은 마커 재클릭 → 닫기
               if (openInfoWindow && openMarker === marker) {
                 openInfoWindow.close();
-                openInfoWindow = null;
-                openMarker = null;
-              } else {
-                if (openInfoWindow) openInfoWindow.close();
-                infoWindow.open(map, marker);
-                openInfoWindow = infoWindow;
-                openMarker = marker;
+                openInfoWindow = openMarker = null;
+                return;
               }
+              // 다른 마커 클릭 → 기존 닫고 새로 열기
+              if (openInfoWindow) openInfoWindow.close();
+
+              // 화면 밖으로 튀어나가는지 체크 (마커 중심 기준)
+              const bounds = map.getBounds();
+              if (!bounds.contain(position)) {
+                map.panTo(position);
+              }
+
+              // InfoWindow 열기
+              infoWindow.open(map, marker);
+              openInfoWindow = infoWindow;
+              openMarker     = marker;
+
+              // outer wrapper 높이를 inner 콘텐츠 높이에 맞춰 동기화
+              setTimeout(() => {
+                // inner 콘텐츠
+                const inner   = document.querySelector('.draggable-iw');
+                if (inner) {
+                  // inner → parent(좌표 0,0 wrapper) → parent(실제 InfoWindow container)
+                  const wrapper = inner.parentElement?.parentElement;
+                  if (wrapper) {
+                    wrapper.style.height = inner.scrollHeight + 'px';
+                  }
+                }
+              }, 50);
             });
           });
         })
-        .catch(function(e) {
-          console.error('데이터 로드 실패:', e);
-        });
+        .catch(err => console.error('데이터 로드 실패:', err));
     });
     /*]]>*/
 </script>

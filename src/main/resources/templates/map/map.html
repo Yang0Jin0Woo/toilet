@@ -2,56 +2,71 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Toilet Map</title>
-    <script
-            th:src="'https://dapi.kakao.com/v2/maps/sdk.js'
-               + '?appkey=' + ${kakaoApiKey}
-               + '&libraries=services&autoload=false'">
+    <!-- 1) 카카오 SDK: Thymeleaf URL 문법으로 appkey 주입 -->
+    <script th:src="@{'https://dapi.kakao.com/v2/maps/sdk.js'
+                    + '?appkey=' + ${kakaoApiKey}
+                    + '&libraries=services&autoload=false'}">
     </script>
 </head>
 <body>
 <div id="map" style="width:100%; height:100vh;"></div>
 
 <script th:inline="javascript">
-    kakao.maps.load(function() {
-      // 1) 지도 생성
-      var map = new kakao.maps.Map(
-        document.getElementById('map'),
-        { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
-      );
+    /*<![CDATA[*/
+      kakao.maps.load(function() {
+        // 2) 지도 생성 (기본 좌표: 서울시청)
+        var map = new kakao.maps.Map(
+          document.getElementById('map'),
+          { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
+        );
 
-      // 2) 위치 변화 감지 → 마커 없이 지도 중심만 이동
-      if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(function(pos) {
-          var latlng = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-          map.setCenter(latlng);
-        }, function(error) {
-          console.error('Geolocation error:', error);
-        }, {
-          enableHighAccuracy: true,
-          maximumAge: 30000,
-          timeout: 27000
-        });
-      } else {
-        // Geolocation 미지원 시 기본 위치로만 센터 이동
-        map.setCenter(new kakao.maps.LatLng(37.566826, 126.9786567));
-      }
-
-      // 3) 화장실 마커 찍기
-      fetch('/toilets')
-        .then(res => res.json())
-        .then(toilets => {
-          var imageSrc  = "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png",
-              imageSize = new kakao.maps.Size(64, 69),
-              imageOpt  = { offset: new kakao.maps.Point(27, 69) },
-              markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
-
-          toilets.forEach(function(t) {
-            var pos = new kakao.maps.LatLng(t.coordY, t.coordX);
-            new kakao.maps.Marker({ position: pos, image: markerImg, map: map });
+        // 3) 내 위치 감지: 지도 중심만 이동 (마커는 표시 안 함)
+        if (navigator.geolocation) {
+          navigator.geolocation.watchPosition(function(pos) {
+            var current = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+            map.setCenter(current);
+          }, function(err) {
+            console.error('Geolocation error:', err);
+          }, {
+            enableHighAccuracy: true,
+            maximumAge: 30000,
+            timeout: 27000
           });
-        });
-    });
+        }
+
+        // 4) 마커 이미지 생성
+        var imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png',
+            imageSize = new kakao.maps.Size(64, 69),
+            imageOpt  = { offset: new kakao.maps.Point(27, 69) },
+            markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
+
+        // 5) DB에서 꺼낸 화장실 데이터 가져와 마커 표시
+        fetch(/*[[@{/toilets}]]*/)
+          .then(function(res) {
+            if (!res.ok) throw new Error('API 에러: ' + res.status);
+            return res.json();
+          })
+          .then(function(toilets) {
+            console.log('▶️ toilets JSON →', toilets);
+            toilets.forEach(function(t) {
+              // coordY: 위도, coordX: 경도 (camelCase 프로퍼티 가정)
+              var lat = t.coordY;
+              var lng = t.coordX;
+
+              new kakao.maps.Marker({
+                map: map,
+                position: new kakao.maps.LatLng(lat, lng),
+                image: markerImg
+              });
+            });
+          })
+          .catch(function(e) {
+            console.error('데이터 로드 실패:', e);
+          });
+      });
+    /*]]>*/
 </script>
 </body>
 </html>

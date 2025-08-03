@@ -1,9 +1,6 @@
 package com.example.toilet.domain;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -18,6 +15,8 @@ public class Toilet {
     private String contsName;
     private String addrNew;
     private String addrOld;
+    @Column(name = "coord_x")
     private Double coordX;
+    @Column(name = "coord_y")
     private Double coordY;
 }

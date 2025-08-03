@@ -17,105 +17,117 @@
 <script th:inline="javascript">
     /*<![CDATA[*/
     kakao.maps.load(function() {
-      // 1) 지도 생성
-      const map = new kakao.maps.Map(
-        document.getElementById('map'),
-        { center: new kakao.maps.LatLng(37.566826, 126.9786567), level: 3 }
-      );
-
-      // 2) 현재 위치 추적 (선택)
+      // 1) 초기 위치 한 번만 가져와서 지도 렌더링
       if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(pos => {
-          map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude));
-        }, console.error, {
-          enableHighAccuracy: true,
-          maximumAge: 30000,
-          timeout: 27000
-        });
+        navigator.geolocation.getCurrentPosition(
+          function(pos) {
+            initMap(pos.coords.latitude, pos.coords.longitude);
+          },
+          function(err) {
+            console.warn('위치 정보 불가, 기본 위치로 초기화', err);
+            initMap(37.566826, 126.9786567);
+          },
+          { enableHighAccuracy: true, timeout: 3000 }
+        );
+      } else {
+        console.warn('Geolocation 미지원, 기본 위치로 초기화');
+        initMap(37.566826, 126.9786567);
       }
 
-      // 3) 마커 이미지 설정
-      const imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
-      const imageSize = new kakao.maps.Size(64, 69);
-      const imageOpt  = { offset: new kakao.maps.Point(27, 69) };
-      const markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
+      // 2) 지도 생성 및 마커/InfoWindow 로직 모두 이 함수 안에서 처리
+      function initMap(lat, lng) {
+        const map = new kakao.maps.Map(
+          document.getElementById('map'),
+          { center: new kakao.maps.LatLng(lat, lng), level: 3 }
+        );
 
-      // 열려 있는 InfoWindow 추적 변수
-      let openInfoWindow = null;
-      let openMarker     = null;
+        // (선택) 이후 위치 변경도 추적하고 싶다면 watchPosition 사용
+        if (navigator.geolocation) {
+          navigator.geolocation.watchPosition(
+            pos => {
+              map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude));
+            },
+            console.error,
+            { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+          );
+        }
 
-      // 4) REST API로부터 화장실 데이터 로드
-      fetch(/*[[@{/toilets}]]*/)
-        .then(res => {
-          if (!res.ok) throw new Error('API 에러: ' + res.status);
-          return res.json();
-        })
-        .then(toilets => {
-          toilets.forEach(t => {
-            // 마커 좌표 (Y: 위도, X: 경도)
-            const position = new kakao.maps.LatLng(t.coordY, t.coordX);
+        // 3) 마커 이미지 설정
+        const imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
+        const imageSize = new kakao.maps.Size(64, 69);
+        const imageOpt  = { offset: new kakao.maps.Point(27, 69) };
+        const markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
 
-            // 마커 생성
-            const marker = new kakao.maps.Marker({ map, position, image: markerImg });
+        let openInfoWindow = null;
+        let openMarker     = null;
 
-            // InfoWindow 내부 콘텐츠 (max-height + scroll)
-            const content = `
-              <div class="draggable-iw" style="
-                padding:8px;
-                font-size:14px;
-                max-width:250px;
-                max-height:180px;    /* 최대 높이 설정 */
-                overflow-y:auto;     /* 넘칠 때 내부 스크롤 */
-                word-break:break-word;
-                overflow-wrap:break-word;
-                box-sizing:border-box;
-                cursor: move;
-              ">
-                <strong>${t.contsName}</strong><br>
-                도로명: ${t.addrNew}<br>
-                지번: ${t.addrOld}
-              </div>
-            `;
-            const infoWindow = new kakao.maps.InfoWindow({ content });
+        // 4) REST API로부터 화장실 데이터 로드
+        fetch(/*[[@{/toilets}]]*/)
+          .then(res => {
+            if (!res.ok) throw new Error('API 에러: ' + res.status);
+            return res.json();
+          })
+          .then(toilets => {
+            toilets.forEach(t => {
+              const position = new kakao.maps.LatLng(t.coordY, t.coordX);
+              const marker   = new kakao.maps.Marker({ map, position, image: markerImg });
 
-            // 마커 클릭 이벤트: 토글 + 패닝 + wrapper 높이 동기화
-            kakao.maps.event.addListener(marker, 'click', function() {
-              // 같은 마커 재클릭 → 닫기
-              if (openInfoWindow && openMarker === marker) {
-                openInfoWindow.close();
-                openInfoWindow = openMarker = null;
-                return;
-              }
-              // 다른 마커 클릭 → 기존 닫고 새로 열기
-              if (openInfoWindow) openInfoWindow.close();
+              // InfoWindow 내부 콘텐츠 (max-height + scroll, draggable-iw 클래스)
+              const content = `
+                <div class="draggable-iw" style="
+                  padding:8px;
+                  font-size:14px;
+                  max-width:250px;
+                  max-height:180px;
+                  overflow-y:auto;
+                  word-break:break-word;
+                  overflow-wrap:break-word;
+                  box-sizing:border-box;
+                  cursor: move;
+                ">
+                  <strong>${t.contsName}</strong><br>
+                  도로명: ${t.addrNew}<br>
+                  지번: ${t.addrOld}
+                </div>
+              `;
+              const infoWindow = new kakao.maps.InfoWindow({ content });
 
-              // 화면 밖으로 튀어나가는지 체크 (마커 중심 기준)
-              const bounds = map.getBounds();
-              if (!bounds.contain(position)) {
-                map.panTo(position);
-              }
-
-              // InfoWindow 열기
-              infoWindow.open(map, marker);
-              openInfoWindow = infoWindow;
-              openMarker     = marker;
-
-              // outer wrapper 높이를 inner 콘텐츠 높이에 맞춰 동기화
-              setTimeout(() => {
-                // inner 콘텐츠
-                const inner   = document.querySelector('.draggable-iw');
-                if (inner) {
-                  // inner → parent(좌표 0,0 wrapper) → parent(실제 InfoWindow container)
-                  const wrapper = inner.parentElement?.parentElement;
-                  if (wrapper) {
-                    wrapper.style.height = inner.scrollHeight + 'px';
-                  }
+              kakao.maps.event.addListener(marker, 'click', function() {
+                // 토글: 같은 마커 재클릭 시 닫기
+                if (openInfoWindow && openMarker === marker) {
+                  openInfoWindow.close();
+                  openInfoWindow = openMarker = null;
+                  return;
                 }
-              }, 50);
+                // 다른 마커 클릭 시 기존 닫기
+                if (openInfoWindow) openInfoWindow.close();
+
+                // 화면 밖으로 나가는지 체크 후 패닝
+                const bounds = map.getBounds();
+                if (!bounds.contain(position)) {
+                  map.panTo(position);
+                }
+
+                // InfoWindow 열기
+                infoWindow.open(map, marker);
+                openInfoWindow = infoWindow;
+                openMarker     = marker;
+
+                // outer wrapper 높이를 inner 콘텐츠 높이에 맞춰 동기화
+                setTimeout(() => {
+                  const inner   = document.querySelector('.draggable-iw');
+                  if (inner) {
+                    const wrapper = inner.parentElement?.parentElement;
+                    if (wrapper) {
+                      wrapper.style.height = inner.scrollHeight + 'px';
+                    }
+                  }
+                }, 50);
+              });
             });
-          });
-        })
-        .catch(err => console.error('데이터 로드 실패:', err));
+          })
+          .catch(err => console.error('데이터 로드 실패:', err));
+      }
     });
     /*]]>*/
 </script>

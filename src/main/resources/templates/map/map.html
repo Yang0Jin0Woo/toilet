@@ -20,9 +20,7 @@
       // 1) 초기 위치 한 번만 가져와서 지도 렌더링
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          function(pos) {
-            initMap(pos.coords.latitude, pos.coords.longitude);
-          },
+          function(pos) { initMap(pos.coords.latitude, pos.coords.longitude); },
           function(err) {
             console.warn('위치 정보 불가, 기본 위치로 초기화', err);
             initMap(37.566826, 126.9786567);
@@ -34,34 +32,57 @@
         initMap(37.566826, 126.9786567);
       }
 
-      // 2) 지도 생성 및 마커/InfoWindow 로직 모두 이 함수 안에서 처리
+      // 2) 지도 생성 및 마커/InfoWindow 로직
       function initMap(lat, lng) {
         const map = new kakao.maps.Map(
           document.getElementById('map'),
           { center: new kakao.maps.LatLng(lat, lng), level: 3 }
         );
 
-        // (선택) 이후 위치 변경도 추적하고 싶다면 watchPosition 사용
+        // (선택) 이후 위치 변경 추적
         if (navigator.geolocation) {
           navigator.geolocation.watchPosition(
-            pos => {
-              map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude));
-            },
+            pos => { map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)); },
             console.error,
             { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
           );
         }
 
-        // 3) 마커 이미지 설정
-        const imageSrc  = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
-        const imageSize = new kakao.maps.Size(64, 69);
-        const imageOpt  = { offset: new kakao.maps.Point(27, 69) };
-        const markerImg = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOpt);
+        // =========================
+        // 🔴 대중적 빨간 '핀형' 마커
+        // =========================
+        const makePinDataUrl = (fill, dotFill = '#ffffff') => {
+          const svg =
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
+               <defs>
+                 <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                   <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.35"/>
+                 </filter>
+               </defs>
+               <!-- 핀 외곽 -->
+               <path fill="${fill}" filter="url(#shadow)"
+                     d="M24 0C12.954 0 4 8.954 4 20c0 13.255 20 44 20 44s20-30.745 20-44C44 8.954 35.046 0 24 0z"/>
+               <!-- 중앙 하이라이트 점 -->
+               <circle cx="24" cy="20" r="7" fill="${dotFill}"/>
+             </svg>`;
+          return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+        };
+
+        // 기본/활성 아이콘 (색만 다르게)
+        const imageSrcDefault = makePinDataUrl('#E53935'); // 기본 빨강
+        const imageSrcActive  = makePinDataUrl('#C62828'); // 선택 시 더 짙은 빨강
+
+        // 아이콘 크기/앵커: 36x48, 바늘 끝이 위치 기준점이 되도록 offset (18, 48)
+        const imageSize = new kakao.maps.Size(36, 48);
+        const imageOpt  = { offset: new kakao.maps.Point(18, 48) };
+
+        const markerImgDefault = new kakao.maps.MarkerImage(imageSrcDefault, imageSize, imageOpt);
+        const markerImgActive  = new kakao.maps.MarkerImage(imageSrcActive,  imageSize, imageOpt);
 
         let openInfoWindow = null;
         let openMarker     = null;
 
-        // 4) REST API로부터 화장실 데이터 로드
+        // 3) REST API로부터 화장실 데이터 로드
         fetch(/*[[@{/toilets}]]*/)
           .then(res => {
             if (!res.ok) throw new Error('API 에러: ' + res.status);
@@ -70,9 +91,9 @@
           .then(toilets => {
             toilets.forEach(t => {
               const position = new kakao.maps.LatLng(t.coordY, t.coordX);
-              const marker   = new kakao.maps.Marker({ map, position, image: markerImg });
+              const marker   = new kakao.maps.Marker({ map, position, image: markerImgDefault });
 
-              // InfoWindow 내부 콘텐츠 (max-height + scroll, draggable-iw 클래스)
+              // InfoWindow 내부 콘텐츠 (max-height + scroll)
               const content = `
                 <div class="draggable-iw" style="
                   padding:8px;
@@ -96,24 +117,29 @@
                 // 토글: 같은 마커 재클릭 시 닫기
                 if (openInfoWindow && openMarker === marker) {
                   openInfoWindow.close();
+                  marker.setImage(markerImgDefault);   // 선택 해제 시 기본 아이콘 복구
                   openInfoWindow = openMarker = null;
                   return;
                 }
-                // 다른 마커 클릭 시 기존 닫기
-                if (openInfoWindow) openInfoWindow.close();
+                // 다른 마커 클릭 시 기존 닫기 + 아이콘 복구
+                if (openInfoWindow && openMarker) {
+                  openInfoWindow.close();
+                  openMarker.setImage(markerImgDefault);
+                }
 
-                // 화면 밖으로 나가는지 체크 후 패닝
+                // 화면 밖이면 패닝
                 const bounds = map.getBounds();
                 if (!bounds.contain(position)) {
                   map.panTo(position);
                 }
 
-                // InfoWindow 열기
+                // InfoWindow 열기 + 활성 아이콘 지정
                 infoWindow.open(map, marker);
+                marker.setImage(markerImgActive);
                 openInfoWindow = infoWindow;
                 openMarker     = marker;
 
-                // outer wrapper 높이를 inner 콘텐츠 높이에 맞춰 동기화
+                // InfoWindow wrapper 높이 동기화(내용 길 때 잘림 방지)
                 setTimeout(() => {
                   const inner   = document.querySelector('.draggable-iw');
                   if (inner) {

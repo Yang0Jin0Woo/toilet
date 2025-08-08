@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <title>Toilet Map</title>
 
     <!-- Kakao Maps SDK (autoload=false 로드 제어) -->
@@ -96,17 +98,16 @@
               // InfoWindow 내부 콘텐츠 (max-height + scroll)
               const content = `
                 <div class="draggable-iw" style="
-                  padding:8px;
-                  font-size:14px;
-                  max-width:250px;
-                  max-height:180px;
-                  overflow-y:auto;
-                  word-break:break-word;
-                  overflow-wrap:break-word;
-                  box-sizing:border-box;
-                  cursor: move;
+                  padding:8px;font-size:14px;max-width:250px;
+                  max-height:180px;overflow-y:auto;word-break:break-word;
+                  overflow-wrap:break-word;box-sizing:border-box;cursor: move;
                 ">
-                  <strong>${t.contsName}</strong><br>
+                  <!-- 아이콘 + 제목 묶음 -->
+                  <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
+                    <strong style="font-size:18px; line-height:1.2;">${t.contsName}</strong>
+                  </div>
+                  <br>
                   도로명: ${t.addrNew}<br>
                   지번: ${t.addrOld}
                 </div>

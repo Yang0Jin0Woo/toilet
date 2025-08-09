@@ -50,6 +50,8 @@ public class ToiletService {
                         toilet.setAddrOld((String) item.get("addr_old"));
                         toilet.setCoordX(Double.parseDouble(coordXObj.toString()));
                         toilet.setCoordY(Double.parseDouble(coordYObj.toString()));
+                        toilet.setValue04((String) item.get("value_04"));
+                        toilet.setValue05((String) item.get("value_05"));
                         toiletRepository.save(toilet);
                     }
                 } catch (Exception e) {

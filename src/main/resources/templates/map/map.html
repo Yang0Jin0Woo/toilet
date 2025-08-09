@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <title>Toilet Map</title>
 
     <!-- Kakao Maps SDK (autoload=false 로드 제어) -->
@@ -12,150 +11,173 @@
                 + '?appkey=' + ${kakaoApiKey}
                 + '&libraries=services&autoload=false'}">
     </script>
+    <style>
+        /* 간단한 범례 스타일 */
+        .legend { position: absolute; z-index: 10; top: 12px; left: 12px; background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08); padding: 8px 10px; font-size: 13px; line-height: 1.35; }
+        .legend .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+        .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.15);}
+    </style>
 </head>
 <body>
-<div id="map" style="width:100%; height:100vh;"></div>
+<div id="map" style="width:100%; height:100vh; position: relative;"></div>
+<div class="legend" aria-hidden="true">
+    <div class="row"><span class="swatch" style="background:#1E88E5"></span> 남자 화장실</div>
+    <div class="row"><span class="swatch" style="background:#E53935"></span> 여자 화장실</div>
+    <div class="row"><span class="swatch" style="background:#FDD835"></span> 장애인 화장실</div>
+    <div class="row"><span class="swatch" style="background:#757575"></span> 기타/알 수 없음</div>
+</div>
 
 <script th:inline="javascript">
     /*<![CDATA[*/
-    kakao.maps.load(function() {
-      // 1) 초기 위치 한 번만 가져와서 지도 렌더링
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          function(pos) { initMap(pos.coords.latitude, pos.coords.longitude); },
-          function(err) {
-            console.warn('위치 정보 불가, 기본 위치로 초기화', err);
-            initMap(37.566826, 126.9786567);
-          },
-          { enableHighAccuracy: true, timeout: 3000 }
-        );
-      } else {
-        console.warn('Geolocation 미지원, 기본 위치로 초기화');
-        initMap(37.566826, 126.9786567);
-      }
-
-      // 2) 지도 생성 및 마커/InfoWindow 로직
-      function initMap(lat, lng) {
-        const map = new kakao.maps.Map(
-          document.getElementById('map'),
-          { center: new kakao.maps.LatLng(lat, lng), level: 3 }
-        );
-
-        // (선택) 이후 위치 변경 추적
+      kakao.maps.load(function() {
+        // 1) 초기 위치 한 번만 가져와서 지도 렌더링
         if (navigator.geolocation) {
-          navigator.geolocation.watchPosition(
-            pos => { map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)); },
-            console.error,
-            { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+          navigator.geolocation.getCurrentPosition(
+            function(pos) { initMap(pos.coords.latitude, pos.coords.longitude); },
+            function(err) {
+              console.warn('위치 정보 불가, 기본 위치로 초기화', err);
+              initMap(37.566826, 126.9786567);
+            },
+            { enableHighAccuracy: true, timeout: 3000 }
           );
+        } else {
+          console.warn('Geolocation 미지원, 기본 위치로 초기화');
+          initMap(37.566826, 126.9786567);
         }
 
-        // =========================
-        // 🔴 대중적 빨간 '핀형' 마커
-        // =========================
-        const makePinDataUrl = (fill, dotFill = '#ffffff') => {
-          const svg =
-            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
-               <defs>
-                 <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-                   <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.35"/>
-                 </filter>
-               </defs>
-               <!-- 핀 외곽 -->
-               <path fill="${fill}" filter="url(#shadow)"
-                     d="M24 0C12.954 0 4 8.954 4 20c0 13.255 20 44 20 44s20-30.745 20-44C44 8.954 35.046 0 24 0z"/>
-               <!-- 중앙 하이라이트 점 -->
-               <circle cx="24" cy="20" r="7" fill="${dotFill}"/>
-             </svg>`;
-          return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
-        };
+        // 2) 지도 생성 및 마커/InfoWindow 로직
+        function initMap(lat, lng) {
+          const map = new kakao.maps.Map(
+            document.getElementById('map'),
+            { center: new kakao.maps.LatLng(lat, lng), level: 3 }
+          );
 
-        // 기본/활성 아이콘 (색만 다르게)
-        const imageSrcDefault = makePinDataUrl('#E53935'); // 기본 빨강
-        const imageSrcActive  = makePinDataUrl('#C62828'); // 선택 시 더 짙은 빨강
+          // (선택) 이후 위치 변경 추적
+          if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(
+              pos => { map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)); },
+              console.error,
+              { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+            );
+          }
 
-        // 아이콘 크기/앵커: 36x48, 바늘 끝이 위치 기준점이 되도록 offset (18, 48)
-        const imageSize = new kakao.maps.Size(36, 48);
-        const imageOpt  = { offset: new kakao.maps.Point(18, 48) };
+          // ==============================
+          // SVG 기반 핀형 마커 이미지 생성
+          // ==============================
+          const makePinDataUrl = (fill, dotFill = '#ffffff') => {
+            const svg =
+              `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
+                 <defs>
+                   <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                     <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.35"/>
+                   </filter>
+                 </defs>
+                 <path fill="${fill}" filter="url(#shadow)"
+                       d="M24 0C12.954 0 4 8.954 4 20c0 13.255 20 44 20 44s20-30.745 20-44C44 8.954 35.046 0 24 0z"/>
+                 <circle cx="24" cy="20" r="7" fill="${dotFill}"/>
+               </svg>`;
+            return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+          };
 
-        const markerImgDefault = new kakao.maps.MarkerImage(imageSrcDefault, imageSize, imageOpt);
-        const markerImgActive  = new kakao.maps.MarkerImage(imageSrcActive,  imageSize, imageOpt);
+          // 색상맵: 남/여/장애/기타
+          const COLORS = {
+            male:     { normal: '#1E88E5', active: '#1565C0' }, // 파랑
+            female:   { normal: '#E53935', active: '#C62828' }, // 빨강
+            disabled: { normal: '#FDD835', active: '#F9A825' }, // 노랑
+            unknown:  { normal: '#757575', active: '#424242' }  // 회색
+          };
 
-        let openInfoWindow = null;
-        let openMarker     = null;
+          // 이미지 팩토리
+          const imageSize = new kakao.maps.Size(36, 48);
+          const imageOpt  = { offset: new kakao.maps.Point(18, 48) };
+          const markerImage = (type, active = false) => new kakao.maps.MarkerImage(
+            makePinDataUrl(COLORS[type][active ? 'active' : 'normal']), imageSize, imageOpt
+          );
 
-        // 3) REST API로부터 화장실 데이터 로드
-        fetch(/*[[@{/toilets}]]*/)
-          .then(res => {
-            if (!res.ok) throw new Error('API 에러: ' + res.status);
-            return res.json();
-          })
-          .then(toilets => {
-            toilets.forEach(t => {
-              const position = new kakao.maps.LatLng(t.coordY, t.coordX);
-              const marker   = new kakao.maps.Marker({ map, position, image: markerImgDefault });
+          // 타입 추론(서버에서 markerType 제공이 최적, 없으면 value04/05로 추론)
+          const inferType = (t) => {
+            if (t.markerType) return t.markerType; // 서버 파생 필드가 있는 경우 우선
+            const v4 = (t.value04 || t.value_04 || '').toString();
+            const v5 = (t.value05 || t.value_05 || '').toString();
+            if (/장애/.test(v4) || /장애/.test(v5)) return 'disabled';
+            const hasM = /남/.test(v4);
+            const hasF = /여/.test(v4);
+            if (hasM && !hasF) return 'male';
+            if (!hasM && hasF) return 'female';
+            return 'unknown';
+          };
 
-              // InfoWindow 내부 콘텐츠 (max-height + scroll)
-              const content = `
-                <div class="draggable-iw" style="
-                  padding:8px;font-size:14px;max-width:250px;
-                  max-height:180px;overflow-y:auto;word-break:break-word;
-                  overflow-wrap:break-word;box-sizing:border-box;cursor: move;
-                ">
-                  <!-- 아이콘 + 제목 묶음 -->
-                  <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
-                    <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
-                    <strong style="font-size:18px; line-height:1.2;">${t.contsName}</strong>
-                  </div>
-                  <br>
-                  도로명: ${t.addrNew}<br>
-                  지번: ${t.addrOld}
-                </div>
-              `;
-              const infoWindow = new kakao.maps.InfoWindow({ content });
+          let openInfoWindow = null;
+          let openMarker     = null;
 
-              kakao.maps.event.addListener(marker, 'click', function() {
-                // 토글: 같은 마커 재클릭 시 닫기
-                if (openInfoWindow && openMarker === marker) {
-                  openInfoWindow.close();
-                  marker.setImage(markerImgDefault);   // 선택 해제 시 기본 아이콘 복구
-                  openInfoWindow = openMarker = null;
-                  return;
-                }
-                // 다른 마커 클릭 시 기존 닫기 + 아이콘 복구
-                if (openInfoWindow && openMarker) {
-                  openInfoWindow.close();
-                  openMarker.setImage(markerImgDefault);
-                }
+          // 3) REST API로부터 화장실 데이터 로드
+          fetch(/*[[@{/toilets}]]*/)
+            .then(res => { if (!res.ok) throw new Error('API 에러: ' + res.status); return res.json(); })
+            .then(toilets => {
+              toilets.forEach(t => {
+                const type = inferType(t);
+                const position = new kakao.maps.LatLng(t.coordY, t.coordX);
+                const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
 
-                // 화면 밖이면 패닝
-                const bounds = map.getBounds();
-                if (!bounds.contain(position)) {
-                  map.panTo(position);
-                }
+                // InfoWindow 내부 콘텐츠 (max-height + scroll)
+                const content = `
+                  <div class="draggable-iw" style="
+                    padding:8px;font-size:14px;max-width:250px;
+                    max-height:180px;overflow-y:auto;word-break:break-word;
+                    overflow-wrap:break-word;box-sizing:border-box;cursor: move;">
+                    <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+                      <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
+                      <strong style="font-size:18px; line-height:1.2;">${t.contsName ?? ''}</strong>
+                    </div>
+                    <br>
+                    ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
+                    ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
+                  </div>`;
+                const infoWindow = new kakao.maps.InfoWindow({ content });
 
-                // InfoWindow 열기 + 활성 아이콘 지정
-                infoWindow.open(map, marker);
-                marker.setImage(markerImgActive);
-                openInfoWindow = infoWindow;
-                openMarker     = marker;
-
-                // InfoWindow wrapper 높이 동기화(내용 길 때 잘림 방지)
-                setTimeout(() => {
-                  const inner   = document.querySelector('.draggable-iw');
-                  if (inner) {
-                    const wrapper = inner.parentElement?.parentElement;
-                    if (wrapper) {
-                      wrapper.style.height = inner.scrollHeight + 'px';
-                    }
+                kakao.maps.event.addListener(marker, 'click', function() {
+                  // 토글: 같은 마커 재클릭 시 닫기
+                  if (openInfoWindow && openMarker === marker) {
+                    openInfoWindow.close();
+                    marker.setImage(markerImage(type, false));
+                    openInfoWindow = openMarker = null;
+                    return;
                   }
-                }, 50);
+                  // 다른 마커 클릭 시 기존 닫기 + 아이콘 복구
+                  if (openInfoWindow && openMarker) {
+                    openInfoWindow.close();
+                    // 이전 마커의 타입을 알 수 없으므로 안전하게 unknown 복구 대신
+                    // data 저장해두는 방식으로 처리
+                    openMarker.setImage(openMarker.__inactiveImage || markerImage('unknown', false));
+                  }
+
+                  // 현재 마커의 기본 이미지 핸들 저장
+                  marker.__inactiveImage = markerImage(type, false);
+
+                  // 화면 밖이면 패닝
+                  const bounds = map.getBounds();
+                  if (!bounds.contain(position)) map.panTo(position);
+
+                  // InfoWindow 열기 + 활성 아이콘 지정
+                  infoWindow.open(map, marker);
+                  marker.setImage(markerImage(type, true));
+                  openInfoWindow = infoWindow;
+                  openMarker     = marker;
+
+                  // InfoWindow wrapper 높이 동기화(내용 길 때 잘림 방지)
+                  setTimeout(() => {
+                    const inner   = document.querySelector('.draggable-iw');
+                    if (inner) {
+                      const wrapper = inner.parentElement?.parentElement;
+                      if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
+                    }
+                  }, 50);
+                });
               });
-            });
-          })
-          .catch(err => console.error('데이터 로드 실패:', err));
-      }
-    });
+            })
+            .catch(err => console.error('데이터 로드 실패:', err));
+        }
+      });
     /*]]>*/
 </script>
 </body>

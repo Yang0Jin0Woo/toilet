@@ -31,6 +31,9 @@ public class Toilet {
     @Transient
     private Long reviewCount;     // 리뷰 수 (조회용)
 
+    @Column(name = "external_id", unique = true)
+    private String externalId;
+
     @Transient
     public String getMarkerType() {
         final String v4 = value04 == null ? "" : value04;

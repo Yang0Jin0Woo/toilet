@@ -5,8 +5,14 @@ CREATE TABLE IF NOT EXISTS toilet (
     addr_new      VARCHAR(255),
     addr_old      VARCHAR(255),
     coord_x       DOUBLE,           -- 경도 (x)
-    coord_y       DOUBLE            -- 위도 (y)
+    coord_y       DOUBLE,           -- 위도 (y)
+    value04       VARCHAR(64),      -- 원본 표기(남/여/장애 등) 선택
+    value05       VARCHAR(64),
+    external_id   VARCHAR(64)       -- 업서트용 자연키
 );
+
+-- external_id 유니크 보장 (제약 대신 인덱스로 안전하게)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_toilet_external_id ON toilet(external_id);
 
 -- 리뷰
 CREATE TABLE IF NOT EXISTS review (
@@ -15,10 +21,8 @@ CREATE TABLE IF NOT EXISTS review (
     rating        INT    NOT NULL,
     comment       VARCHAR(1000),
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
     CONSTRAINT fk_review_toilet
-      FOREIGN KEY (toilet_id) REFERENCES toilet(id)
-
+        FOREIGN KEY (toilet_id) REFERENCES toilet(id),
     CONSTRAINT chk_review_rating
         CHECK (rating BETWEEN 1 AND 5)
 );

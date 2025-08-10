@@ -119,20 +119,30 @@
                 const position = new kakao.maps.LatLng(t.coordY, t.coordX);
                 const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
 
+                const avg = (t.avgRating != null) ? Number(t.avgRating).toFixed(1) : '0.0';
+                const cnt = (t.reviewCount != null) ? t.reviewCount : 0;
+
                 // InfoWindow 내부 콘텐츠 (max-height + scroll)
                 const content = `
-                  <div class="draggable-iw" style="
-                    padding:8px;font-size:14px;max-width:250px;
-                    max-height:180px;overflow-y:auto;word-break:break-word;
-                    overflow-wrap:break-word;box-sizing:border-box;cursor: move;">
-                    <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
-                      <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
-                      <strong style="font-size:18px; line-height:1.2;">${t.contsName ?? ''}</strong>
-                    </div>
-                    <br>
-                    ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
-                    ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
-                  </div>`;
+                 <div class="draggable-iw" style="
+                   padding:8px;font-size:14px;max-width:260px;
+                   max-height:200px;overflow-y:auto;word-break:break-word;">
+                   <div style="display:flex;align-items:center;gap:6px;">
+                     <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
+                     <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
+                   </div>
+                   <div style="margin-top:6px;color:#222;">
+                     ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
+                     ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
+                   </div>
+                   <div style="margin-top:8px;">
+                     <span style="color:#666;">평균 별점:</span>
+                     <a href="/reviews?toiletId=${t.id}" style="text-decoration:underline;">
+                       ★ ${avg} / 5
+                     </a>
+                     <span style="color:#888;">(${cnt})</span>
+                   </div>
+                 </div>`;
                 const infoWindow = new kakao.maps.InfoWindow({ content });
 
                 kakao.maps.event.addListener(marker, 'click', function() {

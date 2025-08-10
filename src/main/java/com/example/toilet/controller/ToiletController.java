@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -19,9 +20,14 @@ public class ToiletController {
     private final ToiletService toiletService;
 
     @GetMapping("/toilets")
-    public ResponseEntity<List<Toilet>> getAllToilets() {
-        List<Toilet> toilets = toiletService.getAllToilets();
-        log.info("🔍 ToiletController.getAllToilets() 호출 → 조회된 개수 = {}", toilets.size());
+    public ResponseEntity<List<Toilet>> getToilets(
+            @RequestParam(name = "withRatings", defaultValue = "true") boolean withRatings) {
+
+        List<Toilet> toilets = withRatings
+                ? toiletService.findAllWithRatings()
+                : toiletService.getAllToilets();
+
+        log.info("🔍 getToilets(withRatings={}) → {}개", withRatings, toilets.size());
         return ResponseEntity.ok(toilets);
     }
 }

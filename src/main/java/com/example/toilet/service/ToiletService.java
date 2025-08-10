@@ -1,6 +1,7 @@
 package com.example.toilet.service;
 
 import com.example.toilet.domain.Toilet;
+import com.example.toilet.repository.ReviewRepository;
 import com.example.toilet.repository.ToiletRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -16,12 +17,15 @@ import jakarta.annotation.PostConstruct;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class ToiletService {
 
     private final ToiletRepository toiletRepository;
+    private final ReviewRepository reviewRepository;
 
     @Value("${toilet.data.path}")
     private String toiletDataPath;
@@ -66,5 +70,28 @@ public class ToiletService {
 
     public List<Toilet> getAllToilets() {
         return toiletRepository.findAll();
+    }
+
+    // 지도 표시: 평균/리뷰수 포함
+    public List<Toilet> findAllWithRatings() {
+        List<Toilet> toilets = toiletRepository.findAll();
+        if (toilets.isEmpty()) return toilets;
+
+        List<Long> ids = toilets.stream().map(Toilet::getId).toList();
+
+        var aggs = reviewRepository.aggregateByToiletIds(ids);
+        Map<Long, ReviewRepository.ToiletRatingAgg> aggMap =
+                aggs.stream().collect(Collectors.toMap(ReviewRepository.ToiletRatingAgg::getToiletId, a -> a));
+
+        for (Toilet t : toilets) {
+            var a = aggMap.get(t.getId());
+            t.setAvgRating(a != null && a.getAvg() != null ? a.getAvg() : 0.0);
+            t.setReviewCount(a != null ? a.getCnt() : 0L);
+        }
+        return toilets;
+    }
+
+    public Optional<Toilet> findById(Long id) {
+        return toiletRepository.findById(id);
     }
 }

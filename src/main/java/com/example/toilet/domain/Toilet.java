@@ -23,6 +23,11 @@ public class Toilet {
     private String value04;         // 남/녀화장실 현황
     private String value05;         // 장애인화장실 현황
 
+    @Transient
+    private Double avgRating;     // 평균 별점 (조회용)
+    @Transient
+    private Long reviewCount;     // 리뷰 수 (조회용)
+
     // 클라이언트에게 내려줄 파생 속성
     @Transient
     public String getMarkerType() {

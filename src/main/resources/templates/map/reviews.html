@@ -4,86 +4,51 @@
     <meta charset="UTF-8" />
     <title th:text="${toilet.contsName} + ' 리뷰'">리뷰</title>
     <style>
-        .star-rating {
-          display: inline-flex;
-          flex-direction: row-reverse;   /* 5 ★ 4 ★ 3 ★ 2 ★ 1 순으로 보이게 */
-          gap: 4px;
-        }
-        .star-rating input {
-          position: absolute;            /* 라디오 숨김 */
-          left: -9999px;
-        }
-        .star-rating label {
-          font-size: 28px;
-          line-height: 1;
-          cursor: pointer;
-          color: #c9c9c9;                /* 기본 회색 */
-          transition: transform .08s ease, color .12s ease;
-          user-select: none;
-        }
+        /* 입력용 별점 (라디오) */
+        .star-rating { display:inline-flex; flex-direction:row-reverse; gap:4px; }
+        .star-rating input { position:absolute; left:-9999px; }
+        .star-rating label { font-size:28px; line-height:1; cursor:pointer; color:#c9c9c9; transition:transform .08s ease, color .12s ease; user-select:none; }
+        .star-rating label:hover, .star-rating label:hover ~ label { color:#ffb400; transform:scale(1.05); }
+        .star-rating input:checked ~ label { color:#ffb400; }
 
-        /* 호버하면 해당 별과 오른쪽(더 낮은 점수) 별들까지 채우기 */
-        .star-rating label:hover,
-        .star-rating label:hover ~ label {
-          color: #ffb400;
-          transform: scale(1.05);
-        }
+        /* 표시용 별점(목록) */
+        .stars { display:inline-flex; gap:2px; font-size:20px; line-height:1; vertical-align:middle; }
+        .star { color:#c9c9c9; }
+        .star.filled { color:#ffb400; }
 
-        /* 선택되었을 때 해당 별과 오른쪽 별들 채우기 */
-        .star-rating input:checked ~ label {
-          color: #ffb400;
-        }
-        .stars {
-            display: inline-flex;
-            gap: 2px;
-            font-size: 20px;
-            line-height: 1;
-            vertical-align: middle;
-        }
-        .star { color: #c9c9c9; }        /* 빈 별 */
-        .star.filled { color: #ffb400; }  /* 채워진 별 */
+        /* 레이아웃 */
+        .meta { color:#666; font-size:14px; }
+        .empty { color:#999; padding:8px 0; }
     </style>
     <script>
-        function toggleForm() {
-          const d = document.getElementById('reviewFormDiv');
-          d.style.display = (d.style.display === 'none') ? 'block' : 'none';
-        }
+        function toggleForm(){ const d=document.getElementById('reviewFormDiv'); d.style.display=(d.style.display==='none')?'block':'none'; }
     </script>
 </head>
 <body>
 <h1 th:text="${toilet.contsName}">화장실 이름</h1>
-<div>
+
+<div class="meta">
     평균 별점:
     <span th:text="${#numbers.formatDecimal(avgRating,1,1)} + ' / 5'">0.0 / 5</span>
-    <a th:href="@{/map}">지도 보기</a>
+    · <a th:href="@{/map}">지도 보기</a>
 </div>
 
 <hr/>
 
 <button type="button" onclick="toggleForm()">리뷰 등록</button>
-
 <div id="reviewFormDiv" style="display:none; margin-top:1em;">
     <form th:action="@{/reviews}" method="post">
         <input type="hidden" name="toiletId" th:value="${toilet.id}"/>
-        <div class="star-rating">
-            <input type="radio" id="star5" name="rating" value="5" required>
-            <label for="star5" title="5점">★</label>
-
-            <input type="radio" id="star4" name="rating" value="4">
-            <label for="star4" title="4점">★</label>
-
-            <input type="radio" id="star3" name="rating" value="3">
-            <label for="star3" title="3점">★</label>
-
-            <input type="radio" id="star2" name="rating" value="2">
-            <label for="star2" title="2점">★</label>
-
-            <input type="radio" id="star1" name="rating" value="1">
-            <label for="star1" title="1점">★</label>
+        <div class="star-rating" aria-label="별점 선택">
+            <input type="radio" id="star5" name="rating" value="5" required><label for="star5" title="5점">★</label>
+            <input type="radio" id="star4" name="rating" value="4"><label for="star4" title="4점">★</label>
+            <input type="radio" id="star3" name="rating" value="3"><label for="star3" title="3점">★</label>
+            <input type="radio" id="star2" name="rating" value="2"><label for="star2" title="2점">★</label>
+            <input type="radio" id="star1" name="rating" value="1"><label for="star1" title="1점">★</label>
         </div>
         <br/>
         <label>코멘트:
-            <textarea name="comment" rows="3" cols="40"></textarea>
+            <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도, 비누/휴지 등"></textarea>
         </label>
         <br/>
         <button type="submit">등록</button>
@@ -92,21 +57,24 @@
 
 <hr/>
 
-<ul>
+<!-- 리뷰 목록 -->
+<ul th:if="${#lists.isEmpty(reviews)}">
+    <li class="empty">아직 등록된 리뷰가 없습니다. 가장 먼저 의견을 남겨주세요!</li>
+</ul>
+
+<ul th:unless="${#lists.isEmpty(reviews)}">
     <li th:each="rev : ${reviews}">
-        <!-- 별 아이콘 5개: rating 이하만 gold로 채움 -->
-        <span class="stars" th:with="r=${rev.rating}">
-      <span class="star"
-            th:each="i : ${#numbers.sequence(1,5)}"
+    <span class="stars" th:with="r=${rev.rating}">
+      <span class="star" th:each="i : ${#numbers.sequence(1,5)}"
             th:classappend="${i <= r} ? ' filled' : ''"
-            title="평점 [[${r}]]/5">★</span>
+            th:title="|평점 ${r}/5|">★</span>
     </span>
 
         <span th:if="${rev.comment}">
       - <span th:text="${rev.comment}">코멘트</span>
     </span>
 
-        <small>(등록: <span th:text="${rev.createdAt}">2025-08-10 12:00</span>)</small>
+        <small class="meta">(등록: <span th:text="${rev.createdAt}">2025-08-10 12:00</span>)</small>
     </li>
 </ul>
 

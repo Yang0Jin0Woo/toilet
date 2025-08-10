@@ -4,6 +4,7 @@ import com.example.toilet.domain.Review;
 import com.example.toilet.domain.Toilet;
 import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
+import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -15,17 +16,13 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @Controller
+@AllArgsConstructor
 public class ReviewController {
 
     private final ReviewService reviewService;
     private final ToiletService toiletService;
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
-    public ReviewController(ReviewService reviewService, ToiletService toiletService) {
-        this.reviewService = reviewService;
-        this.toiletService = toiletService;
-    }
 
     /** 특정 화장실 리뷰 목록/등록 화면 */
     @GetMapping("/reviews")

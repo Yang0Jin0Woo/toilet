@@ -12,9 +12,12 @@ public class Toilet {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // 마커 기본 정보
     private String contsName;
     private String addrNew;
     private String addrOld;
+
+    // 좌표
     @Column(name = "coord_x")
     private Double coordX;
     @Column(name = "coord_y")
@@ -28,7 +31,6 @@ public class Toilet {
     @Transient
     private Long reviewCount;     // 리뷰 수 (조회용)
 
-    // 클라이언트에게 내려줄 파생 속성
     @Transient
     public String getMarkerType() {
         final String v4 = value04 == null ? "" : value04;

@@ -46,11 +46,9 @@
 <h1 th:text="${toilet.contsName}">화장실 이름</h1>
 
 <div class="meta">
-    평균 별점:
     <span class="iw-stars"
           th:attr="aria-label=|평균 ${#numbers.formatDecimal(avgRating,1,1)}점|">
     <span class="iw-stars-outer">★★★★★</span>
-        <!-- avgRating(0~5) × 20 = 채움 퍼센트 -->
     <span class="iw-stars-inner"
           th:style="'width:' + (${avgRating} * 20) + '%'">★★★★★</span>
   </span>
@@ -98,7 +96,6 @@
             th:classappend="${i <= r} ? ' filled' : ''"
             th:title="|평점 ${r}/5|">★</span>
     </span>
-
         <span th:if="${rev.comment}">
       - <span th:text="${rev.comment}">코멘트</span>
     </span>

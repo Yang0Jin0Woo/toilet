@@ -149,12 +149,7 @@
                     <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
                     <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
                   </div>
-                  <div style="margin-top:6px;color:#222;">
-                    ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
-                    ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
-                  </div>
                   <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
-                    <span style="color:#666;">평균 별점:</span>
                     <a href="/reviews?toiletId=${t.id}"
                        style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
                       <span class="iw-stars" aria-label="평균 ${avgTxt}점">
@@ -164,6 +159,10 @@
                       <span>${avgTxt} / 5</span>
                     </a>
                     <span style="color:#888;">(${cnt})</span>
+                  </div>
+                  <div style="margin-top:6px;color:#222;">
+                    ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
+                    ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
                   </div>
                 </div>`;
               const infoWindow = new kakao.maps.InfoWindow({ content });

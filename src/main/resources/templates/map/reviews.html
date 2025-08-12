@@ -27,6 +27,19 @@
     </style>
     <script>
         function toggleForm(){ const d=document.getElementById('reviewFormDiv'); d.style.display=(d.style.display==='none')?'block':'none'; }
+
+        function openReviewForm() {
+           document.getElementById('reviewFormDiv').style.display = 'block';
+           document.getElementById('openReviewBtn').style.display = 'none';
+        }
+
+        function cancelReviewForm() {
+          const formDiv = document.getElementById('reviewFormDiv');
+          formDiv.style.display = 'none';
+          document.getElementById('openReviewBtn').style.display = 'inline-block';
+          const form = formDiv.querySelector('form');
+          if (form) form.reset();
+        }
     </script>
 </head>
 <body>
@@ -47,10 +60,12 @@
 
 <hr/>
 
-<button type="button" onclick="toggleForm()">리뷰 등록</button>
+<button type="button" id="openReviewBtn" onclick="openReviewForm()">리뷰 등록 하기</button>
+
 <div id="reviewFormDiv" style="display:none; margin-top:1em;">
     <form th:action="@{/reviews}" method="post">
         <input type="hidden" name="toiletId" th:value="${toilet.id}"/>
+
         <div class="star-rating" aria-label="별점 선택">
             <input type="radio" id="star5" name="rating" value="5" required><label for="star5" title="5점">★</label>
             <input type="radio" id="star4" name="rating" value="4"><label for="star4" title="4점">★</label>
@@ -63,13 +78,15 @@
             <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도, 비누/휴지 등"></textarea>
         </label>
         <br/>
-        <button type="submit">등록</button>
+        <div style="display:flex; gap:8px;">
+            <button type="submit">등록</button>
+            <button type="button" onclick="cancelReviewForm()">취소</button>
+        </div>
     </form>
 </div>
 
 <hr/>
 
-<!-- 리뷰 목록 -->
 <ul th:if="${#lists.isEmpty(reviews)}">
     <li class="empty">아직 등록된 리뷰가 없습니다. 가장 먼저 의견을 남겨주세요!</li>
 </ul>
@@ -85,7 +102,6 @@
         <span th:if="${rev.comment}">
       - <span th:text="${rev.comment}">코멘트</span>
     </span>
-
         <small class="meta">(등록: <span th:text="${rev.createdAt}">2025-08-10 12:00</span>)</small>
     </li>
 </ul>

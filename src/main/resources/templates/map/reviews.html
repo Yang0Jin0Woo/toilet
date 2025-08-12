@@ -5,7 +5,7 @@
     <title th:text="${toilet.contsName} + ' 리뷰'">리뷰</title>
     <style>
         /* 평균 별점(부분 채움 별) */
-        .iw-stars { position: relative; display: inline-block; line-height: 1; vertical-align: middle; font-size: 18px; margin-right: 6px; }
+        .iw-stars { position: relative; display: inline-block; line-height: 1; vertical-align: middle; font-size: 24px; margin-right: 6px; }
         .iw-stars-outer { color: #c9c9c9; }
         .iw-stars-inner { position: absolute; top: 0; left: 0; white-space: nowrap; overflow: hidden; color: #ffb400; }
 
@@ -24,6 +24,15 @@
         /* 레이아웃 */
         .meta { color:#666; font-size:14px; }
         .empty { color:#999; padding:8px 0; }
+
+        /* 가로 중앙 정렬 */
+        body {
+        text-align: center;
+        }
+        table {
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
     </style>
     <script>
         function toggleForm(){ const d=document.getElementById('reviewFormDiv'); d.style.display=(d.style.display==='none')?'block':'none'; }
@@ -53,14 +62,16 @@
           th:style="'width:' + (${avgRating} * 20) + '%'">★★★★★</span>
   </span>
     <span th:text="${#numbers.formatDecimal(avgRating,1,1)} + ' / 5'">0.0 / 5</span>
-    · <a th:href="@{/map}">지도 보기</a>
+    &nbsp;<a th:href="@{/map}">지도 보기</a>
 </div>
 
-<hr/>
+<br>
 
-<button type="button" id="openReviewBtn" onclick="openReviewForm()">리뷰 등록 하기</button>
+<div style="text-align: right; width: 60%; margin: 0 auto;">
+    <button type="button" id="openReviewBtn" onclick="openReviewForm()">리뷰 등록 하기</button>
+</div>
 
-<div id="reviewFormDiv" style="display:none; margin-top:1em;">
+<div id="reviewFormDiv" style="display:none; margin:20px auto; padding:16px; border:1px solid #ccc; border-radius:8px; text-align:center; width:fit-content;">
     <form th:action="@{/reviews}" method="post">
         <input type="hidden" name="toiletId" th:value="${toilet.id}"/>
 
@@ -72,36 +83,44 @@
             <input type="radio" id="star1" name="rating" value="1"><label for="star1" title="1점">★</label>
         </div>
         <br/>
-        <label>코멘트:
+        <label>
             <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도, 비누/휴지 등"></textarea>
         </label>
         <br/>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; justify-content:center;">
             <button type="submit">등록</button>
             <button type="button" onclick="cancelReviewForm()">취소</button>
         </div>
     </form>
 </div>
 
-<hr/>
-
-<ul th:if="${#lists.isEmpty(reviews)}">
+<ul style="list-style-type: none;" th:if="${#lists.isEmpty(reviews)}">
     <li class="empty">아직 등록된 리뷰가 없습니다. 가장 먼저 의견을 남겨주세요!</li>
 </ul>
 
-<ul th:unless="${#lists.isEmpty(reviews)}">
-    <li th:each="rev : ${reviews}">
-    <span class="stars" th:with="r=${rev.rating}">
-      <span class="star" th:each="i : ${#numbers.sequence(1,5)}"
-            th:classappend="${i <= r} ? ' filled' : ''"
-            th:title="|평점 ${r}/5|">★</span>
-    </span>
-        <span th:if="${rev.comment}">
-      - <span th:text="${rev.comment}">코멘트</span>
-    </span>
-        <small class="meta">(등록: <span th:text="${rev.createdAt}">2025-08-10 12:00</span>)</small>
-    </li>
-</ul>
-
+<table style="width:60%; border-collapse:collapse;" th:unless="${#lists.isEmpty(reviews)}">
+    <thead>
+    <tr>
+        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">별점</th>
+        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">코멘트</th>
+        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">등록일</th>
+    </tr>
+    </thead>
+    <tbody>
+        <tr th:each="rev : ${reviews}">
+            <td style="padding:6px;">
+                    <span class="stars" th:with="r=${rev.rating}">
+                        <span class="star" th:each="i : ${#numbers.sequence(1,5)}"
+                              th:classappend="${i <= r} ? ' filled' : ''"
+                              th:title="|평점 ${r}/5|">★</span>
+                    </span>
+            </td>
+            <td style="padding:6px; text-align:left;" th:text="${rev.comment ?: ''}">코멘트</td>
+            <td style="padding:6px;">
+                <small class="meta" th:text="${rev.createdAt}">2025-08-10 12:00</small>
+            </td>
+        </tr>
+    </tbody>
+</table>
 </body>
 </html>

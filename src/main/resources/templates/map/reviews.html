@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <title th:text="${toilet.contsName} + ' 리뷰'">리뷰</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous">
     <style>
         /* 평균 별점(부분 채움 별) */
         .iw-stars { position: relative; display: inline-block; line-height: 1; vertical-align: middle; font-size: 24px; margin-right: 6px; }
@@ -68,7 +69,7 @@
 <br>
 
 <div style="text-align: right; width: 60%; margin: 0 auto;">
-    <button type="button" id="openReviewBtn" onclick="openReviewForm()">리뷰 등록 하기</button>
+    <button type="button" id="openReviewBtn" onclick="openReviewForm()" class="btn btn-primary">리뷰 등록 하기</button>
 </div>
 
 <div id="reviewFormDiv" style="display:none; margin:20px auto; padding:16px; border:1px solid #ccc; border-radius:8px; text-align:center; width:fit-content;">
@@ -88,8 +89,8 @@
         </label>
         <br/>
         <div style="display:flex; gap:8px; justify-content:center;">
-            <button type="submit">등록</button>
-            <button type="button" onclick="cancelReviewForm()">취소</button>
+            <button type="submit" class="btn btn-primary">등록</button>
+            <button type="button" onclick="cancelReviewForm()" class="btn btn-danger">취소</button>
         </div>
     </form>
 </div>

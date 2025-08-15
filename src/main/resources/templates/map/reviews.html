@@ -103,7 +103,7 @@
     <thead>
     <tr>
         <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">별점</th>
-        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">코멘트</th>
+        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">리뷰</th>
         <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">등록일</th>
     </tr>
     </thead>
@@ -116,7 +116,7 @@
                               th:title="|평점 ${r}/5|">★</span>
                     </span>
             </td>
-            <td style="padding:6px; text-align:left;" th:text="${rev.comment ?: ''}">코멘트</td>
+            <td style="padding:6px; text-align:left;" th:text="${rev.comment ?: ''}">리뷰</td>
             <td style="padding:6px;">
                 <small class="meta" th:text="${rev.createdAt}">2025-08-10 12:00</small>
             </td>

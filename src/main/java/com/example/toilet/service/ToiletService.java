@@ -33,9 +33,9 @@ public class ToiletService {
     @PostConstruct
     public void init() {
         try {
-            // 이미 데이터가 있으면 스킵(필요시 주석 처리하고 "항상 업서트"도 가능)
+            // 이미 데이터가 있으면 스킵
             if (toiletRepository.count() > 0) {
-                System.out.println("Toilet seed skipped. rows=" + toiletRepository.count());
+                // System.out.println("초기 데이터 입력 작업 생략됨. 화장실=" + toiletRepository.count());
                 return;
             }
 
@@ -66,7 +66,7 @@ public class ToiletService {
                     incoming.setValue04((String) item.get("value_04"));
                     incoming.setValue05((String) item.get("value_05"));
 
-                    // ★ 자연키 생성: 이름 + 도로명주소 + 좌표(소수점 6자리) 기반 해시
+                    // 자연키 생성: 이름, 도로명주소, 좌표 기반 해시
                     String externalId = buildExternalId(
                             incoming.getContsName(),
                             incoming.getAddrNew(),
@@ -75,11 +75,12 @@ public class ToiletService {
                     );
                     incoming.setExternalId(externalId);
 
-                    // ★ 업서트
+                    // 업서트
                     upsert(incoming);
 
                 } catch (Exception ignore) {
-                    System.err.println("Skipping invalid entry: " + item);
+                    System.err.println("잘못된 데이터로 인해 건너뜀: " + item);
+                    ignore.printStackTrace();
                 }
             }
         } catch (Exception e) {
@@ -87,7 +88,6 @@ public class ToiletService {
         }
     }
 
-    // === 업서트 ===
     public void upsert(Toilet incoming) {
         var opt = toiletRepository.findByExternalId(incoming.getExternalId());
         if (opt.isPresent()) {
@@ -105,7 +105,7 @@ public class ToiletService {
         }
     }
 
-    /** 이름+주소+좌표를 이용해 안정적인 외부식별자 생성 */
+    // 이름,주소,좌표 이용 - 외부식별자 생성
     private static String buildExternalId(String name, String addrNew, Double x, Double y) {
         String key = (name == null ? "" : name.trim()) + "|"
                 + (addrNew == null ? "" : addrNew.trim()) + "|"
@@ -117,7 +117,6 @@ public class ToiletService {
             for (byte b : hash) sb.append(String.format("%02x", b));
             return sb.toString();
         } catch (Exception e) {
-            // 만일 SHA-1 사용 불가 시 fallback (절대 공백/널 없이)
             return "FALLBACK_" + key.replace(' ', '_');
         }
     }

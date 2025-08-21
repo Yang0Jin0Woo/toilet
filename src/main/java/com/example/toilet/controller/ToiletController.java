@@ -27,7 +27,7 @@ public class ToiletController {
                 ? toiletService.findAllWithRatings()
                 : toiletService.getAllToilets();
 
-        log.info("🔍 getToilets(withRatings={}) → {}개", withRatings, toilets.size());
+        log.info("화장실 조회 (평점 포함 여부: {}) → 총 {}개 반환", withRatings, toilets.size());
         return ResponseEntity.ok(toilets);
     }
 }

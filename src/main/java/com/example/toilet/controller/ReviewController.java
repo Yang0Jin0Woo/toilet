@@ -24,7 +24,7 @@ public class ReviewController {
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
-    /** 특정 화장실 리뷰 목록/등록 화면 */
+    // 화장실 리뷰 목록/등록 화면
     @GetMapping("/reviews")
     public String reviews(@RequestParam("toiletId") Long toiletId, Model model) {
         Toilet toilet = toiletService.findById(toiletId)
@@ -49,7 +49,7 @@ public class ReviewController {
         return "map/reviews";
     }
 
-    /** 리뷰 저장 후 해당 화장실 리뷰 목록으로 이동 */
+    // 리뷰 저장 후 화장실 리뷰 목록
     @PostMapping("/reviews")
     public String create(@RequestParam("toiletId") Long toiletId,
                          @RequestParam("rating") Integer rating,

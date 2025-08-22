@@ -33,7 +33,6 @@ public class ToiletService {
     @PostConstruct
     public void init() {
         try {
-            // 이미 데이터가 있으면 스킵
             if (toiletRepository.count() > 0) {
                 // System.out.println("초기 데이터 입력 작업 생략됨. 화장실=" + toiletRepository.count());
                 return;
@@ -66,7 +65,6 @@ public class ToiletService {
                     incoming.setValue04((String) item.get("value_04"));
                     incoming.setValue05((String) item.get("value_05"));
 
-                    // 자연키 생성: 이름, 도로명주소, 좌표 기반 해시
                     String externalId = buildExternalId(
                             incoming.getContsName(),
                             incoming.getAddrNew(),
@@ -75,7 +73,6 @@ public class ToiletService {
                     );
                     incoming.setExternalId(externalId);
 
-                    // 업서트
                     upsert(incoming);
 
                 } catch (Exception ignore) {
@@ -99,13 +96,12 @@ public class ToiletService {
             t.setCoordY(incoming.getCoordY());
             t.setValue04(incoming.getValue04());
             t.setValue05(incoming.getValue05());
-            toiletRepository.save(t); // PK 유지
+            toiletRepository.save(t);
         } else {
             toiletRepository.save(incoming); // 최초 insert
         }
     }
 
-    // 이름,주소,좌표 이용 - 외부식별자 생성
     private static String buildExternalId(String name, String addrNew, Double x, Double y) {
         String key = (name == null ? "" : name.trim()) + "|"
                 + (addrNew == null ? "" : addrNew.trim()) + "|"

@@ -12,24 +12,22 @@ public class Toilet {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 마커 기본 정보
     private String contsName;
     private String addrNew;
     private String addrOld;
 
-    // 좌표
     @Column(name = "coord_x")
     private Double coordX;
     @Column(name = "coord_y")
     private Double coordY;
 
-    private String value04;         // 남/녀화장실 현황
-    private String value05;         // 장애인화장실 현황
+    private String value04;
+    private String value05;
 
     @Transient
-    private Double avgRating;     // 평균 별점 (조회용)
+    private Double avgRating;
     @Transient
-    private Long reviewCount;     // 리뷰 수 (조회용)
+    private Long reviewCount;
 
     @Column(name = "external_id", unique = true)
     private String externalId;
@@ -39,16 +37,16 @@ public class Toilet {
         final String v4 = value04 == null ? "" : value04;
         final String v5 = value05 == null ? "" : value05;
 
-        // 장애인
+        // 장애인 화장실 여부
         if (v4.contains("장애") || v5.contains("장애")) return "disabled";
 
-        // 단일 성별 - 색 분기
-        final boolean hasM = v4.contains("남");
-        final boolean hasF = v4.contains("여");
+        // 남/여 전용 여부
+        final boolean hasM = v4.contains("남") || v5.contains("남");
+        final boolean hasF = v4.contains("여") || v5.contains("여");
         if (hasM && !hasF) return "male";
         if (!hasM && hasF) return "female";
 
-        // 3) 혼합/불명 - 일반
+        // 기본값
         return "unknown";
     }
 }

@@ -11,7 +11,6 @@
                 + '&libraries=services&autoload=false'}"></script>
 
     <style>
-        /* 범례 */
         .legend {
           position: absolute; z-index: 10; top: 12px; left: 12px;
           background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08);
@@ -20,12 +19,10 @@
         .legend .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
         .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.15); }
 
-        /* 인포윈도우 별점 시각화 */
         .iw-stars { position: relative; display: inline-block; line-height: 1; vertical-align: middle; font-size: 18px; }
         .iw-stars-outer { color: #c9c9c9; }
         .iw-stars-inner { position: absolute; top: 0; left: 0; white-space: nowrap; overflow: hidden; color: #ffb400; }
 
-        /* 데이터 상태 배너 */
         .status {
           position: absolute; z-index: 10; top: 12px; right: 12px;
           background:#fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08);
@@ -54,23 +51,22 @@
 
       function setStatus(html, ok=true) {
         statusEl.innerHTML = html;
-        statusEl.querySelectorAll('.ok,.warn').forEach(()=>{});
         statusEl.classList.remove('is-error');
         statusEl.classList.toggle('is-error', !ok);
       }
 
-      // 초기 위치로 지도 렌더링
+      const fallbackLat = 37.566826, fallbackLng = 126.9786567;
+
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => initMap(pos.coords.latitude, pos.coords.longitude),
-          err => { console.warn('위치 정보 불가, 기본 위치 사용', err); initMap(37.566826, 126.9786567); },
+          err => { console.warn('위치 정보 불가, 기본 위치 사용', err); initMap(fallbackLat, fallbackLng); },
           { enableHighAccuracy: true, timeout: 3000 }
         );
       } else {
-        initMap(37.566826, 126.9786567);
+        initMap(fallbackLat, fallbackLng);
       }
 
-      // 지도 + 마커/인포윈도우 로직
       function initMap(lat, lng) {
         const map = new kakao.maps.Map(document.getElementById('map'), {
           center: new kakao.maps.LatLng(lat, lng), level: 3
@@ -84,7 +80,6 @@
           );
         }
 
-        // 마커 이미지
         const makePinDataUrl = (fill, dotFill = '#ffffff') => {
           const svg =
             `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
@@ -112,7 +107,8 @@
           const v4 = (t.value04 || t.value_04 || '').toString();
           const v5 = (t.value05 || t.value_05 || '').toString();
           if (/장애/.test(v4) || /장애/.test(v5)) return 'disabled';
-          const hasM = /남/.test(v4), hasF = /여/.test(v4);
+          const hasM = /남/.test(v4) || /남/.test(v5);
+          const hasF = /여/.test(v4) || /여/.test(v5);
           if (hasM && !hasF) return 'male';
           if (!hasM && hasF) return 'female';
           return 'unknown';
@@ -121,7 +117,6 @@
         let openInfoWindow = null;
         let openMarker     = null;
 
-        // 데이터 로드
         fetch(/*[[@{/toilets}]]*/)
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(toilets => {
@@ -129,7 +124,7 @@
               setStatus('<span class="warn">데이터 0건</span>', true);
               return;
             }
-            setStatus(`<span class="ok">공공 화장실 개수</span> · ${toilets.length}개`);
+            setStatus(`<span class="ok">공공 화장실</span> · ${toilets.length}개`);
             toilets.forEach(t => {
               const type = inferType(t);
               const position = new kakao.maps.LatLng(t.coordY, t.coordX);
@@ -150,7 +145,7 @@
                   <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
                     <a href="/reviews?toiletId=${t.id}"
                        style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
-                      <span class="iw-stars" aria-label="평균 ${avgTxt}점">
+                      <span class="iw-stars" aria-label="평점 ${avgTxt}">
                         <span class="iw-stars-outer">★★★★★</span>
                         <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
                       </span>
@@ -159,8 +154,8 @@
                     <span style="color:#888;">(${cnt})</span>
                   </div>
                   <div style="margin-top:6px;color:#222;">
-                    ${t.addrNew ? ('도로명: ' + t.addrNew + '<br>') : ''}
-                    ${t.addrOld ? ('지번: ' + t.addrOld) : ''}
+                    ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
+                    ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
                   </div>
                 </div>`;
               const infoWindow = new kakao.maps.InfoWindow({ content });

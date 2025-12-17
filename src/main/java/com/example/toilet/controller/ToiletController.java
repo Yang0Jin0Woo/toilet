@@ -4,7 +4,6 @@ import com.example.toilet.domain.Toilet;
 import com.example.toilet.service.ToiletService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,7 +26,9 @@ public class ToiletController {
                 ? toiletService.findAllWithRatings()
                 : toiletService.getAllToilets();
 
-        log.info("화장실 조회 (평점 포함 여부: {}) → 총 {}개 반환", withRatings, toilets.size());
+        if (!withRatings) {
+            log.info("Toilet list retrieved (withRatings={}): {} items", withRatings, toilets.size());
+        }
         return ResponseEntity.ok(toilets);
     }
 }

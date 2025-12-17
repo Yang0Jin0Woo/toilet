@@ -5,9 +5,12 @@ import com.example.toilet.domain.Toilet;
 import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -17,6 +20,7 @@ import java.util.stream.Collectors;
 
 @Controller
 @AllArgsConstructor
+@Slf4j
 public class ReviewController {
 
     private final ReviewService reviewService;
@@ -24,9 +28,10 @@ public class ReviewController {
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
-    // 화장실 리뷰 목록/등록 화면
     @GetMapping("/reviews")
     public String reviews(@RequestParam("toiletId") Long toiletId, Model model) {
+        long startNanos = System.nanoTime();
+
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
 
@@ -46,10 +51,13 @@ public class ReviewController {
         model.addAttribute("toilet", toilet);
         model.addAttribute("avgRating", avg);
         model.addAttribute("reviews", list);
+
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        log.info("Marker->reviews navigation finished: {} ms (toiletId={}, reviews={})",
+                elapsedMs, toiletId, list.size());
         return "map/reviews";
     }
 
-    // 리뷰 저장 후 화장실 리뷰 목록
     @PostMapping("/reviews")
     public String create(@RequestParam("toiletId") Long toiletId,
                          @RequestParam("rating") Integer rating,

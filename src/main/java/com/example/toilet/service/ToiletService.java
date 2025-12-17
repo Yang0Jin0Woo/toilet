@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ToiletService {
 
     private final ToiletRepository toiletRepository;
@@ -120,11 +121,17 @@ public class ToiletService {
     public List<Toilet> getAllToilets() { return toiletRepository.findAll(); }
 
     public List<Toilet> findAllWithRatings() {
+        long totalStart = System.nanoTime();
+
         List<Toilet> toilets = toiletRepository.findAll();
         if (toilets.isEmpty()) return toilets;
 
         List<Long> ids = toilets.stream().map(Toilet::getId).collect(java.util.stream.Collectors.toList());
+
+        long aggStart = System.nanoTime();
         var aggs = reviewRepository.aggregateByToiletIds(ids);
+        long aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
+
         Map<Long, ReviewRepository.ToiletRatingAgg> aggMap =
                 aggs.stream().collect(java.util.stream.Collectors.toMap(
                         ReviewRepository.ToiletRatingAgg::getToiletId, a -> a));
@@ -134,6 +141,10 @@ public class ToiletService {
             t.setAvgRating(a != null && a.getAvg() != null ? a.getAvg() : 0.0);
             t.setReviewCount(a != null ? a.getCnt() : 0L);
         }
+
+        long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
+        log.info("Aggregated review averages for {} toilets (aggregate query {} ms, total {} ms)",
+                ids.size(), aggElapsedMs, totalElapsedMs);
         return toilets;
     }
 

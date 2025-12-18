@@ -27,10 +27,30 @@ public class Review {
     @Size(max = 1000)
     private String comment;
 
+    /**
+     * 신고 누적 카운트. 임계치 도달 시 blocked=true로 전환한다.
+     */
+    @Column(nullable = false, columnDefinition = "int default 0")
+    private Integer reportCount = 0;
+
+    /**
+     * 차단된 리뷰는 평균 집계와 목록에서 제외된다.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private Boolean blocked = false;
+
     private LocalDateTime createdAt;
 
     @PrePersist
     public void prePersist() {
         createdAt = LocalDateTime.now();
+        if (reportCount == null) reportCount = 0;
+        if (blocked == null) blocked = false;
+    }
+
+    @PostLoad
+    public void postLoad() {
+        if (reportCount == null) reportCount = 0;
+        if (blocked == null) blocked = false;
     }
 }

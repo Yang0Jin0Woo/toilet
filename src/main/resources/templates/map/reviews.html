@@ -10,7 +10,7 @@
         .iw-stars-outer { color: #c9c9c9; }
         .iw-stars-inner { position: absolute; top: 0; left: 0; white-space: nowrap; overflow: hidden; color: #ffb400; }
 
-        /* 입력용 별점 */
+        /* 작성용 별점 */
         .star-rating { display:inline-flex; flex-direction:row-reverse; gap:4px; }
         .star-rating input { position:absolute; left:-9999px; }
         .star-rating label { font-size:28px; line-height:1; cursor:pointer; color:#c9c9c9; transition:transform .08s ease, color .12s ease; user-select:none; }
@@ -40,19 +40,25 @@
           const form = formDiv.querySelector('form');
           if (form) form.reset();
         }
+        function toggleEdit(id) {
+            const row = document.getElementById('edit-row-' + id);
+            if (!row) return;
+            row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+        }
     </script>
 </head>
 <body>
 <h1 th:text="${toilet.contsName}">화장실 이름</h1>
 
 <div th:if="${errorMessage}" class="alert alert-danger" role="alert" th:text="${errorMessage}"></div>
+<div th:if="${infoMessage}" class="alert alert-success" role="alert" th:text="${infoMessage}"></div>
 
 <div class="meta">
     <span class="iw-stars"
           th:attr="aria-label=|평점 ${#numbers.formatDecimal(avgRating,1,1)}|">
-    <span class="iw-stars-outer">★★★★★</span>
+    <span class="iw-stars-outer">★ ★ ★ ★ ★</span>
     <span class="iw-stars-inner"
-          th:style="'width:' + (${avgRating} * 20) + '%'">★★★★★</span>
+          th:style="'width:' + (${avgRating} * 20) + '%'">★ ★ ★ ★ ★</span>
   </span>
     <span th:text="${#numbers.formatDecimal(avgRating,1,1)} + ' / 5'">0.0 / 5</span>
     &nbsp;<a th:href="@{/map}">지도 보기</a>
@@ -61,8 +67,8 @@
 <br>
 
 <div style="text-align: right; width: 60%; margin: 0 auto;">
-    <button type="button" id="openReviewBtn" onclick="openReviewForm()" class="btn btn-primary">리뷰 등록 하기</button>
-</div>
+    <button type="button" id="openReviewBtn" onclick="openReviewForm()" class="btn btn-primary">리뷰 작성하기</button>
+  </div>
 
 <div id="reviewFormDiv" style="display:none; margin:20px auto; padding:16px; border:1px solid #ccc; border-radius:8px; text-align:center; width:fit-content;">
     <form th:action="@{/reviews}" method="post">
@@ -77,7 +83,7 @@
         </div>
         <br/>
         <label>
-            <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도 비고/제안" maxlength="1000"></textarea>
+            <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도/비고/보안" maxlength="1000"></textarea>
         </label>
         <br/>
         <div style="display:flex; gap:8px; justify-content:center;">
@@ -88,7 +94,7 @@
 </div>
 
 <ul style="list-style-type: none;" th:if="${#lists.isEmpty(reviews)}">
-    <li class="empty">아직 등록된 리뷰가 없습니다. 값을 남겨주세요!</li>
+    <li class="empty">아직 등록된 리뷰가 없습니다. 의견을 남겨주세요.</li>
 </ul>
 
 <table style="width:60%; border-collapse:collapse;" th:unless="${#lists.isEmpty(reviews)}">
@@ -97,6 +103,7 @@
         <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">별점</th>
         <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">리뷰</th>
         <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">등록일</th>
+        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">관리</th>
     </tr>
     </thead>
     <tbody>
@@ -111,6 +118,55 @@
             <td style="padding:6px; text-align:left;" th:text="${rev.comment ?: ''}">리뷰</td>
             <td style="padding:6px;">
                 <small class="meta" th:text="${rev.createdAt}">2025-08-10 12:00</small>
+            </td>
+            <td style="padding:6px; text-align:center;">
+                <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                            th:attr="onclick=|toggleEdit(''+${rev.id})|">수정</button>
+                    <form th:action="@{/reviews/delete}" method="post" style="display:inline;">
+                        <input type="hidden" name="reviewId" th:value="${rev.id}">
+                        <input type="hidden" name="toiletId" th:value="${toilet.id}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
+                    </form>
+                    <form th:action="@{/reviews/report}" method="post" style="display:inline;">
+                        <input type="hidden" name="reviewId" th:value="${rev.id}">
+                        <input type="hidden" name="toiletId" th:value="${toilet.id}">
+                        <button type="submit" class="btn btn-sm btn-outline-warning">신고</button>
+                    </form>
+                </div>
+                <div style="margin-top:4px; font-size:12px; color:#777;" th:if="${rev.reportCount > 0}">
+                    <span th:text="|신고 ${rev.reportCount}회|">신고 0회</span>
+                </div>
+            </td>
+        </tr>
+        <tr th:each="rev : ${reviews}"
+            th:id="|edit-row-${rev.id}|"
+            style="display:none;">
+            <td colspan="4" style="background:#f9f9f9; padding:10px;">
+                <form th:action="@{/reviews/update}" method="post" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <input type="hidden" name="reviewId" th:value="${rev.id}">
+                    <input type="hidden" name="toiletId" th:value="${toilet.id}">
+                    <div>
+                        <label for="rating" class="form-label">별점</label>
+                        <select name="rating" class="form-select form-select-sm">
+                            <option th:value="5" th:selected="${rev.rating == 5}">5</option>
+                            <option th:value="4" th:selected="${rev.rating == 4}">4</option>
+                            <option th:value="3" th:selected="${rev.rating == 3}">3</option>
+                            <option th:value="2" th:selected="${rev.rating == 2}">2</option>
+                            <option th:value="1" th:selected="${rev.rating == 1}">1</option>
+                        </select>
+                    </div>
+                    <div style="flex:1; min-width:240px;">
+                        <label class="form-label">리뷰 내용</label>
+                        <textarea name="comment" rows="2" class="form-control" maxlength="1000"
+                                  th:text="${rev.comment}"></textarea>
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        <button type="submit" class="btn btn-sm btn-primary">수정 완료</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                th:attr="onclick=|toggleEdit(''+${rev.id})|">취소</button>
+                    </div>
+                </form>
             </td>
         </tr>
     </tbody>

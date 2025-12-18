@@ -106,7 +106,7 @@
           if (t.markerType) return t.markerType;
           const v4 = (t.value04 || t.value_04 || '').toString();
           const v5 = (t.value05 || t.value_05 || '').toString();
-          if (/장애/.test(v4) || /장애/.test(v5)) return 'disabled';
+          if (/장애인/.test(v4) || /장애인/.test(v5)) return 'disabled';
           const hasM = /남/.test(v4) || /남/.test(v5);
           const hasF = /여/.test(v4) || /여/.test(v5);
           if (hasM && !hasF) return 'male';

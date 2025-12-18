@@ -37,8 +37,10 @@ public class Toilet {
         final String v4 = value04 == null ? "" : value04;
         final String v5 = value05 == null ? "" : value05;
 
-        // 장애인 화장실 여부
-        if (v4.contains("장애") || v5.contains("장애")) return "disabled";
+        // 장애인 전용 여부
+        if (v4.contains("장애인") || v5.contains("장애인")) {
+            return "disabled";
+        }
 
         // 남/여 전용 여부
         final boolean hasM = v4.contains("남") || v5.contains("남");

@@ -78,6 +78,8 @@
         map = new kakao.maps.Map(document.getElementById('map'), {
           center: new kakao.maps.LatLng(lat, lng), level: 3
         });
+        map.setMinLevel(1); // 줌 인 최댓값(숫자 작을수록 확대)
+        map.setMaxLevel(6); // 줌 아웃 최댓값
 
         if (navigator.geolocation) {
           navigator.geolocation.watchPosition(

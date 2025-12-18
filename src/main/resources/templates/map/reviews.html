@@ -48,7 +48,7 @@
     </script>
 </head>
 <body>
-<h1 th:text="${toilet.contsName}">화장실 이름</h1>
+<h1 th:text="${toilet.contsName}" class="mt-5 mb-4">화장실 이름</h1>
 
 <div th:if="${errorMessage}" class="alert alert-danger" role="alert" th:text="${errorMessage}"></div>
 <div th:if="${infoMessage}" class="alert alert-success" role="alert" th:text="${infoMessage}"></div>

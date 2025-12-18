@@ -297,7 +297,8 @@
         kakao.maps.event.addListener(map, 'dragstart', () => { userInteracted = true; });
         kakao.maps.event.addListener(map, 'idle', () => debouncedRender()); // 드래그/줌 후 중심 변경 시 재계산
 
-        fetch(/*[[@{/toilets}]]*/)
+        // 1) 가벼운 목록(평점 제외) 먼저 로드
+        fetch(/*[[@{/toilets}]]*/ + '?withRatings=false')
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(toilets => {
             if (!Array.isArray(toilets) || toilets.length === 0) {
@@ -306,6 +307,21 @@
             }
             allToilets = toilets;
             debouncedRender();
+            setStatus(`<span class="ok">공공 화장실</span> · ${toilets.length}개 (기본)`);
+            // 2) 평점 포함 데이터로 후속 갱신
+            fetch(/*[[@{/toilets}]]*/ + '?withRatings=true')
+              .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+              .then(full => {
+                if (Array.isArray(full) && full.length) {
+                  allToilets = full;
+                  debouncedRender();
+                  setStatus(`<span class="ok">공공 화장실</span> · ${full.length}개 (평점 포함)`);
+                }
+              })
+              .catch(err => {
+                console.error('평점 데이터 로드 실패:', err);
+                setStatus('<span class="warn">평점 데이터 로드 실패</span> · 콘솔 확인', false);
+              });
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);

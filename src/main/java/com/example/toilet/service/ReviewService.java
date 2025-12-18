@@ -14,6 +14,7 @@ import java.util.List;
 public class ReviewService {
 
     private final ReviewRepository reviewRepository;
+    private final ToiletService toiletService;
 
     public List<Review> findByToilet(Long toiletId) {
         return reviewRepository.findByToiletIdOrderByIdDesc(toiletId);
@@ -26,6 +27,9 @@ public class ReviewService {
 
     @Transactional
     public Review save(Review r) {
-        return reviewRepository.save(r);
+        Review saved = reviewRepository.save(r);
+        // incrementally update cache to avoid re-aggregating
+        toiletService.applyReviewDelta(saved.getToilet().getId(), saved.getRating());
+        return saved;
     }
 }

@@ -25,6 +25,16 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ToiletService {
 
+    /**
+     * Ratings cache: toiletId -> sum/count for O(1) avg reuse across requests.
+     */
+    public record RatingAgg(double sum, long count) {
+        public double avg() { return count == 0 ? 0.0 : sum / count; }
+    }
+
+    private final java.util.concurrent.ConcurrentMap<Long, RatingAgg> ratingCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private final ToiletRepository toiletRepository;
     private final ReviewRepository reviewRepository;
 
@@ -120,6 +130,10 @@ public class ToiletService {
 
     public List<Toilet> getAllToilets() { return toiletRepository.findAll(); }
 
+    /**
+     * Returns toilets with avg/count, preferring cached aggregates.
+     * Cache is populated lazily on misses using a single group-by query.
+     */
     public List<Toilet> findAllWithRatings() {
         long totalStart = System.nanoTime();
 
@@ -128,24 +142,48 @@ public class ToiletService {
 
         List<Long> ids = toilets.stream().map(Toilet::getId).collect(java.util.stream.Collectors.toList());
 
-        long aggStart = System.nanoTime();
-        var aggs = reviewRepository.aggregateByToiletIds(ids);
-        long aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
+        // Load missing ids into cache with one group-by query.
+        List<Long> missing = ids.stream().filter(id -> !ratingCache.containsKey(id)).toList();
+        long aggElapsedMs = 0;
+        if (!missing.isEmpty()) {
+            long aggStart = System.nanoTime();
+            var aggs = reviewRepository.aggregateByToiletIds(missing);
+            aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
 
-        Map<Long, ReviewRepository.ToiletRatingAgg> aggMap =
-                aggs.stream().collect(java.util.stream.Collectors.toMap(
-                        ReviewRepository.ToiletRatingAgg::getToiletId, a -> a));
+            for (var a : aggs) {
+                double avg = a.getAvg() != null ? a.getAvg() : 0.0;
+                long cnt = a.getCnt() != null ? a.getCnt() : 0L;
+                ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt));
+            }
+            // ensure toilets with no reviews still get zeroed cache entry
+            missing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0)));
+        }
 
         for (Toilet t : toilets) {
-            var a = aggMap.get(t.getId());
-            t.setAvgRating(a != null && a.getAvg() != null ? a.getAvg() : 0.0);
-            t.setReviewCount(a != null ? a.getCnt() : 0L);
+            RatingAgg agg = ratingCache.get(t.getId());
+            double avg = agg != null ? agg.avg() : 0.0;
+            long cnt = agg != null ? agg.count() : 0L;
+            t.setAvgRating(avg);
+            t.setReviewCount(cnt);
         }
 
         long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
-        log.info("Aggregated review averages for {} toilets (aggregate query {} ms, total {} ms)",
-                ids.size(), aggElapsedMs, totalElapsedMs);
+        log.info("Aggregated review averages for {} toilets (aggregate query {} ms, total {} ms, cacheSize={})",
+                ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
         return toilets;
+    }
+
+    /**
+     * Update cache when a new review is added. If cache is empty, we lazily
+     * initialize an entry instead of forcing a DB round trip.
+     */
+    public void applyReviewDelta(Long toiletId, int ratingDelta) {
+        if (toiletId == null) return;
+        ratingCache.compute(toiletId, (id, agg) -> {
+            double newSum = ratingDelta + (agg == null ? 0.0 : agg.sum());
+            long newCnt = 1 + (agg == null ? 0 : agg.count());
+            return new RatingAgg(newSum, newCnt);
+        });
     }
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }

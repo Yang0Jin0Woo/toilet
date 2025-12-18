@@ -5,44 +5,34 @@
     <title th:text="${toilet.contsName} + ' 리뷰'">리뷰</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        /* 평균 별점(부분 채움 별) */
+        /* 별점 뷰 */
         .iw-stars { position: relative; display: inline-block; line-height: 1; vertical-align: middle; font-size: 24px; margin-right: 6px; }
         .iw-stars-outer { color: #c9c9c9; }
         .iw-stars-inner { position: absolute; top: 0; left: 0; white-space: nowrap; overflow: hidden; color: #ffb400; }
 
-        /* 입력용 별점 (라디오) */
+        /* 입력용 별점 */
         .star-rating { display:inline-flex; flex-direction:row-reverse; gap:4px; }
         .star-rating input { position:absolute; left:-9999px; }
         .star-rating label { font-size:28px; line-height:1; cursor:pointer; color:#c9c9c9; transition:transform .08s ease, color .12s ease; user-select:none; }
         .star-rating label:hover, .star-rating label:hover ~ label { color:#ffb400; transform:scale(1.05); }
         .star-rating input:checked ~ label { color:#ffb400; }
 
-        /* 표시용 별점(목록) */
+        /* 목록 별점 */
         .stars { display:inline-flex; gap:2px; font-size:20px; line-height:1; vertical-align:middle; }
         .star { color:#c9c9c9; }
         .star.filled { color:#ffb400; }
 
-        /* 레이아웃 */
         .meta { color:#666; font-size:14px; }
         .empty { color:#999; padding:8px 0; }
 
-        /* 가로 중앙 정렬 */
-        body {
-        text-align: center;
-        }
-        table {
-            margin: 0 auto;
-            border-collapse: collapse;
-        }
+        body { text-align: center; }
+        table { margin: 0 auto; border-collapse: collapse; }
     </style>
     <script>
-        function toggleForm(){ const d=document.getElementById('reviewFormDiv'); d.style.display=(d.style.display==='none')?'block':'none'; }
-
         function openReviewForm() {
            document.getElementById('reviewFormDiv').style.display = 'block';
            document.getElementById('openReviewBtn').style.display = 'none';
         }
-
         function cancelReviewForm() {
           const formDiv = document.getElementById('reviewFormDiv');
           formDiv.style.display = 'none';
@@ -55,9 +45,11 @@
 <body>
 <h1 th:text="${toilet.contsName}">화장실 이름</h1>
 
+<div th:if="${errorMessage}" class="alert alert-danger" role="alert" th:text="${errorMessage}"></div>
+
 <div class="meta">
     <span class="iw-stars"
-          th:attr="aria-label=|평균 ${#numbers.formatDecimal(avgRating,1,1)}점|">
+          th:attr="aria-label=|평점 ${#numbers.formatDecimal(avgRating,1,1)}|">
     <span class="iw-stars-outer">★★★★★</span>
     <span class="iw-stars-inner"
           th:style="'width:' + (${avgRating} * 20) + '%'">★★★★★</span>
@@ -85,7 +77,7 @@
         </div>
         <br/>
         <label>
-            <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도, 비누/휴지 등"></textarea>
+            <textarea name="comment" rows="3" cols="40" placeholder="이용 소감, 청결도 비고/제안" maxlength="1000"></textarea>
         </label>
         <br/>
         <div style="display:flex; gap:8px; justify-content:center;">
@@ -96,7 +88,7 @@
 </div>
 
 <ul style="list-style-type: none;" th:if="${#lists.isEmpty(reviews)}">
-    <li class="empty">아직 등록된 리뷰가 없습니다. 가장 먼저 의견을 남겨주세요!</li>
+    <li class="empty">아직 등록된 리뷰가 없습니다. 값을 남겨주세요!</li>
 </ul>
 
 <table style="width:60%; border-collapse:collapse;" th:unless="${#lists.isEmpty(reviews)}">
@@ -113,7 +105,7 @@
                     <span class="stars" th:with="r=${rev.rating}">
                         <span class="star" th:each="i : ${#numbers.sequence(1,5)}"
                               th:classappend="${i <= r} ? ' filled' : ''"
-                              th:title="|평점 ${r}/5|">★</span>
+                              th:title="|별점 ${r}/5|">★</span>
                     </span>
             </td>
             <td style="padding:6px; text-align:left;" th:text="${rev.comment ?: ''}">리뷰</td>
@@ -122,6 +114,6 @@
             </td>
         </tr>
     </tbody>
-</table>
+    </table>
 </body>
 </html>

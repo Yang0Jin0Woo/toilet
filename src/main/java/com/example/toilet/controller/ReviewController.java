@@ -4,13 +4,18 @@ import com.example.toilet.domain.Review;
 import com.example.toilet.domain.Toilet;
 import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -21,6 +26,7 @@ import java.util.stream.Collectors;
 @Controller
 @AllArgsConstructor
 @Slf4j
+@Validated
 public class ReviewController {
 
     private final ReviewService reviewService;
@@ -60,8 +66,8 @@ public class ReviewController {
 
     @PostMapping("/reviews")
     public String create(@RequestParam("toiletId") Long toiletId,
-                         @RequestParam("rating") Integer rating,
-                         @RequestParam(value = "comment", required = false) String comment) {
+                         @RequestParam("rating") @Min(1) @Max(5) Integer rating,
+                         @RequestParam(value = "comment", required = false) @Size(max = 1000) String comment) {
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));

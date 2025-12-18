@@ -83,7 +83,7 @@ public class ReviewController {
         model.addAttribute("reviews", list);
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-        log.info("Marker->reviews navigation finished: {} ms (toiletId={}, reviews={})",
+        log.info("마커→리뷰 이동 완료: {} ms (toiletId={}, 리뷰수={})",
                 elapsedMs, toiletId, list.size());
         return "map/reviews";
     }

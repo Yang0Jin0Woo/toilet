@@ -28,13 +28,14 @@ public class ReviewService {
     @Transactional
     public Review save(Review r) {
         Review saved = reviewRepository.save(r);
-        // incrementally update cache to avoid re-aggregating
+        // 캐시 업데이트 → 집계 쿼리 재실행 방지
         toiletService.applyReviewDelta(saved.getToilet().getId(), saved.getRating());
         return saved;
     }
 
     /**
-     * Update review rating/comment and keep cache in sync.
+     * 리뷰 평점/내용을 수정하고,
+     * 캐시된 집계 정보와의 일관성을 유지한다.
      */
     @Transactional
     public Review update(Long reviewId, int newRating, String newComment) {
@@ -49,7 +50,8 @@ public class ReviewService {
     }
 
     /**
-     * Delete review and decrement cache counters.
+     * 리뷰를 삭제하고,
+     * 캐시에 저장된 합계 및 개수 정보를 감소시킨다.
      */
     @Transactional
     public void delete(Long reviewId) {

@@ -27,7 +27,8 @@ import java.util.concurrent.ConcurrentMap;
 public class ToiletService {
 
     /**
-     * Ratings cache: toiletId -> sum/count (+timestamp) for O(1) avg reuse across requests.
+     * 캐시 적용: toiletId → sum/count (+timestamp)
+     * 평균 집계 O(N) → O(1) 개선
      */
     public record RatingAgg(double sum, long count, long lastUpdatedMs) {
         public double avg() { return count == 0 ? 0.0 : sum / count; }
@@ -36,6 +37,7 @@ public class ToiletService {
         }
     }
 
+    // 캐시 TTL 최소 보장값 (1초)
     private static final long MIN_TTL_MS = 1_000L;
 
     private final ConcurrentMap<Long, RatingAgg> ratingCache = new ConcurrentHashMap<>();
@@ -49,15 +51,16 @@ public class ToiletService {
     @Value("${rating.cache.ttl-ms:300000}")
     private long ratingCacheTtlMs;
 
+    // TTL이 너무 짧을 경우 최소값으로 보정
     @PostConstruct
     public void init() {
         try {
             if (ratingCacheTtlMs > 0 && ratingCacheTtlMs < MIN_TTL_MS) {
-                log.warn("rating.cache.ttl-ms {}ms is too small; clamping to {}ms", ratingCacheTtlMs, MIN_TTL_MS);
+                log.warn("rating.cache.ttl-ms 값이 너무 작아 {}ms로 보정합니다 (현재 {}ms)", ratingCacheTtlMs, MIN_TTL_MS);
                 ratingCacheTtlMs = MIN_TTL_MS;
             }
             if (toiletRepository.count() > 0) {
-                // System.out.println("초기 데이터 입력 작업 생략됨. 화장실=" + toiletRepository.count());
+                // System.out.println("초기 데이터 입력 작업 생략됨(이미 데이터 존재 경우). 화장실=" + toiletRepository.count());
                 return;
             }
 
@@ -121,7 +124,7 @@ public class ToiletService {
             t.setValue05(incoming.getValue05());
             toiletRepository.save(t);
         } else {
-            toiletRepository.save(incoming); // 최초 insert
+            toiletRepository.save(incoming); // 최초 삽입
         }
     }
 
@@ -143,8 +146,9 @@ public class ToiletService {
     public List<Toilet> getAllToilets() { return toiletRepository.findAll(); }
 
     /**
-     * Returns toilets with avg/count, preferring cached aggregates.
-     * Cache is populated lazily on misses using a single group-by query.
+     * 평균 평점/리뷰 수를 포함한 화장실 목록 반환
+     * 캐시된 집계 결과를 우선 사용하며,
+     * 캐시 미스 시 단일 GROUP BY 쿼리로 캐시를 지연 로딩
      */
     public List<Toilet> findAllWithRatings() {
         long totalStart = System.nanoTime();
@@ -156,7 +160,7 @@ public class ToiletService {
 
         long now = System.currentTimeMillis();
 
-        // Load missing or stale ids into cache with one group-by query.
+        // 캐시에 없거나 TTL이 만료된 화장실 ID 목록 추출
         List<Long> missing = ids.stream()
                 .filter(id -> {
                     RatingAgg agg = ratingCache.get(id);
@@ -164,6 +168,8 @@ public class ToiletService {
                 })
                 .toList();
         long aggElapsedMs = 0;
+
+        // 누락되거나 만료된 ID들에 대해 단일 그룹 집계 쿼리 수행
         if (!missing.isEmpty()) {
             long aggStart = System.nanoTime();
             var aggs = reviewRepository.aggregateByToiletIds(missing);
@@ -174,7 +180,7 @@ public class ToiletService {
                 long cnt = a.getCnt() != null ? a.getCnt() : 0L;
                 ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt, now));
             }
-            // ensure toilets with no reviews still get zeroed cache entry
+            // 리뷰가 없는 화장실도 캐시에 0값으로 등록
             missing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, now)));
         }
 
@@ -187,21 +193,23 @@ public class ToiletService {
         }
 
         long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
-        log.info("Aggregated review averages for {} toilets (aggregate query {} ms, total {} ms, cacheSize={})",
+        log.info("{}개 화장실 평점 집계 완료 (집계 쿼리 {} ms, 총 {} ms, 캐시크기={})",
                 ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
         return toilets;
     }
 
     /**
-     * Update cache when a new review is added. If cache is empty, we lazily
-     * initialize an entry instead of forcing a DB round trip.
+     * 새로운 리뷰가 추가될 때, 캐시 갱신
+     * 캐시가 비어 있는 경우에도 DB 조회 없이
+     * 즉시 초기 엔트리를 생성
      */
     public void applyReviewDelta(Long toiletId, int ratingDelta) {
         applyReviewDelta(toiletId, ratingDelta, 1);
     }
 
     /**
-     * Generic cache delta updater (supports delete via negative countDelta).
+     * 범용 캐시 증분 갱신 메서드
+     * countDelta가 음수인 경우, 삭제 지원
      */
     public void applyReviewDelta(Long toiletId, int ratingDelta, long countDelta) {
         if (toiletId == null) return;
@@ -217,7 +225,8 @@ public class ToiletService {
     }
 
     /**
-     * Update cache for review rating change without altering count.
+     * 리뷰 평점 수정 시 캐시 갱신
+     * (리뷰 개수는 변경하지 않음)
      */
     public void applyReviewUpdate(Long toiletId, int oldRating, int newRating) {
         if (toiletId == null) return;
@@ -227,7 +236,8 @@ public class ToiletService {
     }
 
     /**
-     * Evict a single toilet's cached rating (forces reload on next request).
+     * 특정 화장실의 평점 캐시를 제거
+     * 다음 요청 시 DB에서 재집계
      */
     public void evictRating(Long toiletId) {
         if (toiletId != null) {
@@ -236,7 +246,8 @@ public class ToiletService {
     }
 
     /**
-     * Refresh a single toilet's rating directly from DB (e.g., after delete/update).
+     * 특정 화장실의 평점을 DB에서 직접 다시 조회하여 캐시 갱신
+     * (리뷰 삭제/수정 이후 사용)
      */
     public void refreshRatingFromDb(Long toiletId) {
         if (toiletId == null) return;

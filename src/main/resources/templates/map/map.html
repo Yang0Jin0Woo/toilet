@@ -26,7 +26,7 @@
         .status {
           position: absolute; z-index: 10; top: 12px; right: 12px;
           background:#fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08);
-          padding: 8px 10px; font-size: 12px; color:#333; min-width: 140px; text-align: right;
+          padding: 8px 10px; font-size: 12px; color:#333; min-width: 160px; text-align: right;
         }
         .status .ok { color:#2e7d32; }
         .status .warn { color:#c62828; }
@@ -42,7 +42,7 @@
     <div class="row"><span class="swatch" style="background:#757575"></span> 기타</div>
 </div>
 
-<div id="status" class="status">데이터 로딩 중…</div>
+<div id="status" class="status">데이터 로드 중...</div>
 
 <script th:inline="javascript">
     /*<![CDATA[*/
@@ -56,10 +56,17 @@
       }
 
       const fallbackLat = 37.566826, fallbackLng = 126.9786567;
+      let userPosition = { lat: fallbackLat, lng: fallbackLng };
+      let allToilets = [];
+      let markers = [];
+      let openInfoWindow = null;
+      let openMarker     = null;
+      let map;
+      let userInteracted = false; // 지도 드래그/줌 이후에는 자동 재중심을 막기 위한 플래그
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          pos => initMap(pos.coords.latitude, pos.coords.longitude),
+          pos => { userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude }; initMap(userPosition.lat, userPosition.lng); },
           err => { console.warn('위치 정보 불가, 기본 위치 사용', err); initMap(fallbackLat, fallbackLng); },
           { enableHighAccuracy: true, timeout: 3000 }
         );
@@ -68,13 +75,19 @@
       }
 
       function initMap(lat, lng) {
-        const map = new kakao.maps.Map(document.getElementById('map'), {
+        map = new kakao.maps.Map(document.getElementById('map'), {
           center: new kakao.maps.LatLng(lat, lng), level: 3
         });
 
         if (navigator.geolocation) {
           navigator.geolocation.watchPosition(
-            pos => map.setCenter(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
+            pos => {
+              userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              if (!userInteracted) {
+                map.setCenter(new kakao.maps.LatLng(userPosition.lat, userPosition.lng));
+                renderMarkers();
+              }
+            },
             console.error,
             { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
           );
@@ -114,79 +127,167 @@
           return 'unknown';
         };
 
-        let openInfoWindow = null;
-        let openMarker     = null;
+        const haversine = (lat1, lng1, lat2, lng2) => {
+          const R = 6371000;
+          const toRad = d => d * Math.PI / 180;
+          const dLat = toRad(lat2 - lat1);
+          const dLng = toRad(lng2 - lng1);
+          const a = Math.sin(dLat/2)**2 +
+                    Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          return R * c;
+        };
+
+        // Bounded max-heap: keep only N nearest items (largest distance removed first).
+        class BoundedMaxHeap {
+          constructor(limit) { this.h = []; this.limit = limit; }
+          push(node) {
+            this.h.push(node); this._up(this.h.length - 1);
+            if (this.h.length > this.limit) this.pop();
+          }
+          pop() {
+            if (!this.h.length) return null;
+            const top = this.h[0];
+            const last = this.h.pop();
+            if (this.h.length) { this.h[0] = last; this._down(0); }
+            return top;
+          }
+          toArray() { return [...this.h]; }
+          _up(i) {
+            while (i > 0) {
+              const p = (i - 1) >> 1;
+              if (this.h[p].dist >= this.h[i].dist) break;
+              [this.h[p], this.h[i]] = [this.h[i], this.h[p]];
+              i = p;
+            }
+          }
+          _down(i) {
+            const n = this.h.length;
+            while (true) {
+              let l = i*2 + 1, r = l + 1, largest = i;
+              if (l < n && this.h[l].dist > this.h[largest].dist) largest = l;
+              if (r < n && this.h[r].dist > this.h[largest].dist) largest = r;
+              if (largest === i) break;
+              [this.h[i], this.h[largest]] = [this.h[largest], this.h[i]];
+              i = largest;
+            }
+          }
+        }
+
+        const limitForZoom = (level) => {
+          if (level <= 3) return 40;
+          if (level <= 5) return 60;
+          return 80;
+        };
+
+        const clearMarkers = () => {
+          markers.forEach(m => m.setMap(null));
+          markers = [];
+          if (openInfoWindow && openMarker) {
+            openInfoWindow.close();
+            openInfoWindow = null;
+            openMarker = null;
+          }
+        };
+
+        const renderMarkers = () => {
+          if (!Array.isArray(allToilets) || allToilets.length === 0) return;
+          clearMarkers();
+
+          const center = map.getCenter();
+          const origin = { lat: center.getLat(), lng: center.getLng() }; // 줌/이동 후 현재 지도 중심 기준
+          const limit = limitForZoom(map.getLevel());
+
+          const heap = new BoundedMaxHeap(limit);
+          allToilets.forEach(t => {
+            if (t.coordY == null || t.coordX == null) return;
+            const dist = haversine(origin.lat, origin.lng, t.coordY, t.coordX);
+            heap.push({ toilet: t, dist });
+          });
+          const selected = heap.toArray().sort((a,b) => a.dist - b.dist);
+
+          selected.forEach(({ toilet: t }) => {
+            const type = inferType(t);
+            const position = new kakao.maps.LatLng(t.coordY, t.coordX);
+            const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
+
+            const avgNum  = t.avgRating != null ? Number(t.avgRating) : 0;
+            const avgTxt  = avgNum.toFixed(1);
+            const cnt     = t.reviewCount != null ? t.reviewCount : 0;
+            const percent = Math.max(0, Math.min(100, (avgNum/5)*100)).toFixed(0);
+
+            const content = `
+              <div class="draggable-iw" style="padding:8px;font-size:14px;max-width:260px;
+                   max-height:200px;overflow-y:auto;word-break:break-word;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
+                  <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
+                </div>
+                <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
+                  <a href="/reviews?toiletId=${t.id}"
+                     style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
+                    <span class="iw-stars" aria-label="평점 ${avgTxt}">
+                      <span class="iw-stars-outer">★★★★★</span>
+                      <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
+                    </span>
+                    <span>${avgTxt} / 5</span>
+                  </a>
+                  <span style="color:#888;">(${cnt})</span>
+                </div>
+                <div style="margin-top:6px;color:#222;">
+                  ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
+                  ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
+                </div>
+              </div>`;
+            const infoWindow = new kakao.maps.InfoWindow({ content });
+
+            kakao.maps.event.addListener(marker, 'click', function () {
+              if (openInfoWindow && openMarker === marker) {
+                openInfoWindow.close(); marker.setImage(markerImage(type, false));
+                openInfoWindow = openMarker = null; return;
+              }
+              if (openInfoWindow && openMarker) {
+                openInfoWindow.close();
+                openMarker.setImage(openMarker.__inactiveImage || markerImage('unknown', false));
+              }
+              marker.__inactiveImage = markerImage(type, false);
+
+              const bounds = map.getBounds();
+              if (!bounds.contain(position)) map.panTo(position);
+
+              infoWindow.open(map, marker);
+              marker.setImage(markerImage(type, true));
+              openInfoWindow = infoWindow; openMarker = marker;
+
+              setTimeout(() => {
+                const inner = document.querySelector('.draggable-iw');
+                if (inner) {
+                  const wrapper = inner.parentElement && inner.parentElement.parentElement;
+                  if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
+                }
+              }, 50);
+            });
+
+            markers.push(marker);
+          });
+
+          setStatus(`<span class="ok">공공 화장실</span> · ${selected.length}개 (zoom:${map.getLevel()})`);
+        };
+
+        kakao.maps.event.addListener(map, 'zoom_changed', () => renderMarkers());
+        kakao.maps.event.addListener(map, 'zoom_start', () => { userInteracted = true; });
+        kakao.maps.event.addListener(map, 'dragstart', () => { userInteracted = true; });
+        kakao.maps.event.addListener(map, 'idle', () => renderMarkers()); // 드래그/줌 후 중심 변경 시 재계산
 
         fetch(/*[[@{/toilets}]]*/)
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(toilets => {
             if (!Array.isArray(toilets) || toilets.length === 0) {
-              setStatus('<span class="warn">데이터 0건</span>', true);
+              setStatus('<span class="warn">데이터 0개</span>', true);
               return;
             }
-            setStatus(`<span class="ok">공공 화장실</span> · ${toilets.length}개`);
-            toilets.forEach(t => {
-              const type = inferType(t);
-              const position = new kakao.maps.LatLng(t.coordY, t.coordX);
-              const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
-
-              const avgNum  = t.avgRating != null ? Number(t.avgRating) : 0;
-              const avgTxt  = avgNum.toFixed(1);
-              const cnt     = t.reviewCount != null ? t.reviewCount : 0;
-              const percent = Math.max(0, Math.min(100, (avgNum/5)*100)).toFixed(0);
-
-              const content = `
-                <div class="draggable-iw" style="padding:8px;font-size:14px;max-width:260px;
-                     max-height:200px;overflow-y:auto;word-break:break-word;">
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
-                    <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
-                  </div>
-                  <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
-                    <a href="/reviews?toiletId=${t.id}"
-                       style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
-                      <span class="iw-stars" aria-label="평점 ${avgTxt}">
-                        <span class="iw-stars-outer">★★★★★</span>
-                        <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
-                      </span>
-                      <span>${avgTxt} / 5</span>
-                    </a>
-                    <span style="color:#888;">(${cnt})</span>
-                  </div>
-                  <div style="margin-top:6px;color:#222;">
-                    ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
-                    ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
-                  </div>
-                </div>`;
-              const infoWindow = new kakao.maps.InfoWindow({ content });
-
-              kakao.maps.event.addListener(marker, 'click', function () {
-                if (openInfoWindow && openMarker === marker) {
-                  openInfoWindow.close(); marker.setImage(markerImage(type, false));
-                  openInfoWindow = openMarker = null; return;
-                }
-                if (openInfoWindow && openMarker) {
-                  openInfoWindow.close();
-                  openMarker.setImage(openMarker.__inactiveImage || markerImage('unknown', false));
-                }
-                marker.__inactiveImage = markerImage(type, false);
-
-                const bounds = map.getBounds();
-                if (!bounds.contain(position)) map.panTo(position);
-
-                infoWindow.open(map, marker);
-                marker.setImage(markerImage(type, true));
-                openInfoWindow = infoWindow; openMarker = marker;
-
-                setTimeout(() => {
-                  const inner = document.querySelector('.draggable-iw');
-                  if (inner) {
-                    const wrapper = inner.parentElement && inner.parentElement.parentElement;
-                    if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
-                  }
-                }, 50);
-              });
-            });
+            allToilets = toilets;
+            renderMarkers();
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);

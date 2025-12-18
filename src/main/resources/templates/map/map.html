@@ -85,7 +85,7 @@
               userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
               if (!userInteracted) {
                 map.setCenter(new kakao.maps.LatLng(userPosition.lat, userPosition.lng));
-                renderMarkers();
+                debouncedRender();
               }
             },
             console.error,
@@ -136,6 +136,14 @@
                     Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
           return R * c;
+        };
+
+        const debounce = (fn, delay = 150) => {
+          let tid;
+          return (...args) => {
+            clearTimeout(tid);
+            tid = setTimeout(() => fn(...args), delay);
+          };
         };
 
         // Bounded max-heap: keep only N nearest items (largest distance removed first).
@@ -198,9 +206,17 @@
           const origin = { lat: center.getLat(), lng: center.getLng() }; // 줌/이동 후 현재 지도 중심 기준
           const limit = limitForZoom(map.getLevel());
 
+          const bounds = map.getBounds();
+          const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+
+          const filtered = allToilets.filter(t => {
+            if (t.coordY == null || t.coordX == null) return false;
+            return t.coordY >= sw.getLat() && t.coordY <= ne.getLat()
+                && t.coordX >= sw.getLng() && t.coordX <= ne.getLng();
+          });
+
           const heap = new BoundedMaxHeap(limit);
-          allToilets.forEach(t => {
-            if (t.coordY == null || t.coordX == null) return;
+          filtered.forEach(t => {
             const dist = haversine(origin.lat, origin.lng, t.coordY, t.coordX);
             heap.push({ toilet: t, dist });
           });
@@ -274,10 +290,12 @@
           setStatus(`<span class="ok">공공 화장실</span> · ${selected.length}개 (zoom:${map.getLevel()})`);
         };
 
-        kakao.maps.event.addListener(map, 'zoom_changed', () => renderMarkers());
+        const debouncedRender = debounce(renderMarkers, 120);
+
+        kakao.maps.event.addListener(map, 'zoom_changed', () => debouncedRender());
         kakao.maps.event.addListener(map, 'zoom_start', () => { userInteracted = true; });
         kakao.maps.event.addListener(map, 'dragstart', () => { userInteracted = true; });
-        kakao.maps.event.addListener(map, 'idle', () => renderMarkers()); // 드래그/줌 후 중심 변경 시 재계산
+        kakao.maps.event.addListener(map, 'idle', () => debouncedRender()); // 드래그/줌 후 중심 변경 시 재계산
 
         fetch(/*[[@{/toilets}]]*/)
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
@@ -287,7 +305,7 @@
               return;
             }
             allToilets = toilets;
-            renderMarkers();
+            debouncedRender();
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);

@@ -6,7 +6,6 @@ import com.example.toilet.repository.ToiletRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Service
 @RequiredArgsConstructor
@@ -26,14 +27,18 @@ import java.util.stream.Collectors;
 public class ToiletService {
 
     /**
-     * Ratings cache: toiletId -> sum/count for O(1) avg reuse across requests.
+     * Ratings cache: toiletId -> sum/count (+timestamp) for O(1) avg reuse across requests.
      */
-    public record RatingAgg(double sum, long count) {
+    public record RatingAgg(double sum, long count, long lastUpdatedMs) {
         public double avg() { return count == 0 ? 0.0 : sum / count; }
+        public boolean isStale(long now, long ttlMs) {
+            return ttlMs > 0 && now - lastUpdatedMs >= ttlMs;
+        }
     }
 
-    private final java.util.concurrent.ConcurrentMap<Long, RatingAgg> ratingCache =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long MIN_TTL_MS = 1_000L;
+
+    private final ConcurrentMap<Long, RatingAgg> ratingCache = new ConcurrentHashMap<>();
 
     private final ToiletRepository toiletRepository;
     private final ReviewRepository reviewRepository;
@@ -41,9 +46,16 @@ public class ToiletService {
     @Value("${toilet.data.path}")
     private String toiletDataPath;
 
+    @Value("${rating.cache.ttl-ms:300000}")
+    private long ratingCacheTtlMs;
+
     @PostConstruct
     public void init() {
         try {
+            if (ratingCacheTtlMs > 0 && ratingCacheTtlMs < MIN_TTL_MS) {
+                log.warn("rating.cache.ttl-ms {}ms is too small; clamping to {}ms", ratingCacheTtlMs, MIN_TTL_MS);
+                ratingCacheTtlMs = MIN_TTL_MS;
+            }
             if (toiletRepository.count() > 0) {
                 // System.out.println("초기 데이터 입력 작업 생략됨. 화장실=" + toiletRepository.count());
                 return;
@@ -142,8 +154,15 @@ public class ToiletService {
 
         List<Long> ids = toilets.stream().map(Toilet::getId).collect(java.util.stream.Collectors.toList());
 
-        // Load missing ids into cache with one group-by query.
-        List<Long> missing = ids.stream().filter(id -> !ratingCache.containsKey(id)).toList();
+        long now = System.currentTimeMillis();
+
+        // Load missing or stale ids into cache with one group-by query.
+        List<Long> missing = ids.stream()
+                .filter(id -> {
+                    RatingAgg agg = ratingCache.get(id);
+                    return agg == null || agg.isStale(now, ratingCacheTtlMs);
+                })
+                .toList();
         long aggElapsedMs = 0;
         if (!missing.isEmpty()) {
             long aggStart = System.nanoTime();
@@ -153,10 +172,10 @@ public class ToiletService {
             for (var a : aggs) {
                 double avg = a.getAvg() != null ? a.getAvg() : 0.0;
                 long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-                ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt));
+                ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt, now));
             }
             // ensure toilets with no reviews still get zeroed cache entry
-            missing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0)));
+            missing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, now)));
         }
 
         for (Toilet t : toilets) {
@@ -178,12 +197,59 @@ public class ToiletService {
      * initialize an entry instead of forcing a DB round trip.
      */
     public void applyReviewDelta(Long toiletId, int ratingDelta) {
+        applyReviewDelta(toiletId, ratingDelta, 1);
+    }
+
+    /**
+     * Generic cache delta updater (supports delete via negative countDelta).
+     */
+    public void applyReviewDelta(Long toiletId, int ratingDelta, long countDelta) {
         if (toiletId == null) return;
+        long now = System.currentTimeMillis();
         ratingCache.compute(toiletId, (id, agg) -> {
-            double newSum = ratingDelta + (agg == null ? 0.0 : agg.sum());
-            long newCnt = 1 + (agg == null ? 0 : agg.count());
-            return new RatingAgg(newSum, newCnt);
+            double baseSum = agg == null ? 0.0 : agg.sum();
+            long baseCnt = agg == null ? 0 : agg.count();
+            long newCnt = Math.max(0, baseCnt + countDelta);
+            double newSum = Math.max(0.0, baseSum + ratingDelta);
+            if (newCnt == 0) newSum = 0.0;
+            return new RatingAgg(newSum, newCnt, now);
         });
+    }
+
+    /**
+     * Update cache for review rating change without altering count.
+     */
+    public void applyReviewUpdate(Long toiletId, int oldRating, int newRating) {
+        if (toiletId == null) return;
+        int delta = newRating - oldRating;
+        if (delta == 0) return;
+        applyReviewDelta(toiletId, delta, 0);
+    }
+
+    /**
+     * Evict a single toilet's cached rating (forces reload on next request).
+     */
+    public void evictRating(Long toiletId) {
+        if (toiletId != null) {
+            ratingCache.remove(toiletId);
+        }
+    }
+
+    /**
+     * Refresh a single toilet's rating directly from DB (e.g., after delete/update).
+     */
+    public void refreshRatingFromDb(Long toiletId) {
+        if (toiletId == null) return;
+        long now = System.currentTimeMillis();
+        var aggs = reviewRepository.aggregateByToiletIds(List.of(toiletId));
+        if (aggs.isEmpty()) {
+            ratingCache.put(toiletId, new RatingAgg(0.0, 0, now));
+            return;
+        }
+        var a = aggs.get(0);
+        double avg = a.getAvg() != null ? a.getAvg() : 0.0;
+        long cnt = a.getCnt() != null ? a.getCnt() : 0L;
+        ratingCache.put(toiletId, new RatingAgg(avg * cnt, cnt, now));
     }
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }

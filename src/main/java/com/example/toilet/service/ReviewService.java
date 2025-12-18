@@ -32,4 +32,30 @@ public class ReviewService {
         toiletService.applyReviewDelta(saved.getToilet().getId(), saved.getRating());
         return saved;
     }
+
+    /**
+     * Update review rating/comment and keep cache in sync.
+     */
+    @Transactional
+    public Review update(Long reviewId, int newRating, String newComment) {
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
+        int oldRating = review.getRating();
+        review.setRating(newRating);
+        review.setComment(newComment);
+        Review saved = reviewRepository.save(review);
+        toiletService.applyReviewUpdate(review.getToilet().getId(), oldRating, newRating);
+        return saved;
+    }
+
+    /**
+     * Delete review and decrement cache counters.
+     */
+    @Transactional
+    public void delete(Long reviewId) {
+        reviewRepository.findById(reviewId).ifPresent(r -> {
+            reviewRepository.delete(r);
+            toiletService.applyReviewDelta(r.getToilet().getId(), -r.getRating(), -1);
+        });
+    }
 }

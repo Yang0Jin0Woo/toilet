@@ -45,11 +45,19 @@ public class ToiletService {
     private final ToiletRepository toiletRepository;
     private final ReviewRepository reviewRepository;
 
+    private static final ThreadLocal<Long> LAST_AGG_MS = new ThreadLocal<>();
+
     @Value("${toilet.data.path}")
     private String toiletDataPath;
 
     @Value("${rating.cache.ttl-ms:300000}")
     private long ratingCacheTtlMs;
+
+    @Value("${rating.cache.enabled:true}")
+    private boolean ratingCacheEnabled;
+
+    @Value("${rating.aggregation.mode:group}")
+    private String ratingAggregationMode;
 
     // TTL이 너무 짧을 경우 최소값으로 보정
     @PostConstruct
@@ -145,6 +153,76 @@ public class ToiletService {
 
     public List<Toilet> getAllToilets() { return toiletRepository.findAll(); }
 
+    private enum RatingAggMode { GROUP, PER_TOILET }
+
+    private RatingAggMode resolveAggMode() {
+        return "per_toilet".equalsIgnoreCase(ratingAggregationMode)
+                ? RatingAggMode.PER_TOILET
+                : RatingAggMode.GROUP;
+    }
+
+    private long applyGroupRatingsNoCache(List<Toilet> toilets, List<Long> ids) {
+        long aggStart = System.nanoTime();
+        var aggs = reviewRepository.aggregateByToiletIds(ids);
+        long aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
+
+        Map<Long, ReviewRepository.ToiletRatingAgg> map = aggs.stream()
+                .collect(Collectors.toMap(ReviewRepository.ToiletRatingAgg::getToiletId, a -> a));
+
+        setLastAggMs(aggElapsedMs);
+
+        for (Toilet t : toilets) {
+            var a = map.get(t.getId());
+            double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
+            long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
+            t.setAvgRating(avg);
+            t.setReviewCount(cnt);
+        }
+        return aggElapsedMs;
+    }
+
+    private long applyPerToiletRatingsNoCache(List<Toilet> toilets) {
+        long aggStart = System.nanoTime();
+        for (Toilet t : toilets) {
+            var a = reviewRepository.aggregateByToiletId(t.getId());
+            double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
+            long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
+            t.setAvgRating(avg);
+            t.setReviewCount(cnt);
+        }
+        return (System.nanoTime() - aggStart) / 1_000_000;
+    }
+
+    private long applyPerToiletRatingsWithCache(List<Toilet> toilets, List<Long> ids, long now) {
+        List<Long> missing = ids.stream()
+                .filter(id -> {
+                    RatingAgg agg = ratingCache.get(id);
+                    return agg == null || agg.isStale(now, ratingCacheTtlMs);
+                })
+                .toList();
+
+        long aggElapsedMs = 0;
+        if (!missing.isEmpty()) {
+            long aggStart = System.nanoTime();
+            for (Long id : missing) {
+                var a = reviewRepository.aggregateByToiletId(id);
+                double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
+                long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
+                ratingCache.put(id, new RatingAgg(avg * cnt, cnt, now));
+            }
+            aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
+        }
+
+        for (Toilet t : toilets) {
+            RatingAgg agg = ratingCache.get(t.getId());
+            double avg = agg != null ? agg.avg() : 0.0;
+            long cnt = agg != null ? agg.count() : 0L;
+            t.setAvgRating(avg);
+            t.setReviewCount(cnt);
+        }
+        return aggElapsedMs;
+    }
+
     /**
      * 평균 평점/리뷰 수를 포함한 화장실 목록 반환
      * 캐시된 집계 결과를 우선 사용하며,
@@ -154,11 +232,35 @@ public class ToiletService {
         long totalStart = System.nanoTime();
 
         List<Toilet> toilets = toiletRepository.findAll();
-        if (toilets.isEmpty()) return toilets;
+        if (toilets.isEmpty()) {
+            setLastAggMs(0);
+            return toilets;
+        }
 
         List<Long> ids = toilets.stream().map(Toilet::getId).collect(java.util.stream.Collectors.toList());
 
         long now = System.currentTimeMillis();
+        RatingAggMode mode = resolveAggMode();
+
+        if (!ratingCacheEnabled) {
+            long aggElapsedMs = mode == RatingAggMode.GROUP
+                    ? applyGroupRatingsNoCache(toilets, ids)
+                    : applyPerToiletRatingsNoCache(toilets);
+            setLastAggMs(aggElapsedMs);
+            long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
+            log.info("Ratings computed (mode={}, cacheEnabled={}, toilets={}, aggMs={}, totalMs={})",
+                    mode, ratingCacheEnabled, ids.size(), aggElapsedMs, totalElapsedMs);
+            return toilets;
+        }
+
+        if (mode == RatingAggMode.PER_TOILET) {
+            long aggElapsedMs = applyPerToiletRatingsWithCache(toilets, ids, now);
+            setLastAggMs(aggElapsedMs);
+            long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
+            log.info("Ratings computed (mode={}, cacheEnabled={}, toilets={}, aggMs={}, totalMs={}, cacheSize={})",
+                    mode, ratingCacheEnabled, ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
+            return toilets;
+        }
 
         // 캐시에 없거나 TTL이 만료된 화장실 ID 목록 추출
         List<Long> missing = ids.stream()
@@ -195,6 +297,8 @@ public class ToiletService {
         long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
         log.info("{}개 화장실 평점 집계 완료 (집계 쿼리 {} ms, 총 {} ms, 캐시크기={})",
                 ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
+        log.info("Ratings computed (mode={}, cacheEnabled={}, toilets={}, aggMs={}, totalMs={}, cacheSize={})",
+                mode, ratingCacheEnabled, ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
         return toilets;
     }
 
@@ -261,6 +365,16 @@ public class ToiletService {
         double avg = a.getAvg() != null ? a.getAvg() : 0.0;
         long cnt = a.getCnt() != null ? a.getCnt() : 0L;
         ratingCache.put(toiletId, new RatingAgg(avg * cnt, cnt, now));
+    }
+
+    public Long consumeLastAggMs() {
+        Long v = LAST_AGG_MS.get();
+        LAST_AGG_MS.remove();
+        return v;
+    }
+
+    private void setLastAggMs(long ms) {
+        LAST_AGG_MS.set(ms);
     }
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }

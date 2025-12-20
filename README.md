@@ -144,13 +144,15 @@ src
 
 ## 테스트
 
-- `RatingAggComparisonTest`: 집계 방식(Per-toilet vs Group vs Cache) 성능 비교 로그 출력.
-- `QueryLogDiagnosticsTest`: 캐시 미적용 시 집계 쿼리 반복 실행(SQL_LOG) 증빙.
-- `QueryCountProofTest`: 캐시 적용 전/후 쿼리 카운트(SELECT 수) 비교 증빙.
-- `CacheTtlPerfTest`: 캐시/TTL 성능 측정(aggMs/totalMs) 로그 출력.
-- `CacheConsistencyMismatchTest`: 캐시-DB 불일치 재현 및 TTL 갱신 확인.
-
-
+- `ToiletApplicationTests`: Spring 컨텍스트 로딩 스모크 테스트.
+- `RatingAggComparisonTest`: per-toilet vs group vs cache warm 비교, `/toilets?withRatings=true` 응답 헤더 `X-Total-Ms`, `X-Agg-Ms` 로그.
+- `CacheTtlPerfTest`: TTL(3초)에서 NO_CACHE/WARM/TTL_EXPIRE_SPIKE 구간 성능 및 캐시 히트/미스 통계 출력.
+- `CacheConsistencyMismatchTest`: DB 직접 변경 시 캐시/DB 불일치 재현 후 `evict`로 복구 확인.
+- `QueryLogDiagnosticsTest`: cache on/off에서 SQL 로그와 GROUP BY 감지 로그 확인.
+- `QueryCountProofTest`: datasource-proxy로 쿼리 타입별 카운트(SELECT/INSERT/UPDATE/DELETE) 증빙.
+- `SlowQueryTestConfig`: 느린 쿼리 경고 및 SQL 로그 공통 설정.
+- `RenderLatencyStatsTest`: `seoultoilet.json` 기준 좌표를 사용해 sort vs heap 선택 알고리즘의 계산 시간 비교.
+- 대부분 `SpringBootTest`로 실행되며 로컬 DB와 초기 데이터 로딩이 필요.
 ## 기술 스택
 
 ![Java](https://img.shields.io/badge/Java-007396?style=for-the-badge&logo=openjdk&logoColor=white)
@@ -168,3 +170,4 @@ src
 
 ## AWS EC2 & RDS
 - http://3.36.128.192:8080/map (종료됨)
+

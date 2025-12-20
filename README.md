@@ -99,7 +99,10 @@ src
  │               └─ reviews.html
  └─ test
      └─ java/com/example/toilet
-         ├─ FunctionalDiagnosticsTest.java
+         ├─ CacheConsistencyMismatchTest.java
+         ├─ CacheTtlPerfTest.java
+         ├─ QueryCountProofTest.java
+         ├─ QueryLogDiagnosticsTest.java
          ├─ RatingAggComparisonTest.java
          ├─ SlowQueryTestConfig.java
          └─ ToiletApplicationTests.java
@@ -123,11 +126,11 @@ src
 - 실제 서비스에서는 최초 1회만 적재, 이후 DB 조회 수행.
 
 ## 성능
-| 구분 | 집계 방식 | DB 집계 시간 (aggMs) | 전체 응답 시간 (totalMs) | DB 접근 특성 |
-| --- | --- | --- | --- | --- |
-| **그룹 X** | **각각 화장실에 평점 집게 수행** | **평균 588 ~ 628 ms** | **평균 599 ~ 640 ms** | **화장실별 집계 쿼리 반복(N번)** |
-| **그룹 O + 캐시 X** | **그룹 집계+캐시 X** | **평균 9 ~ 11 ms** | **평균 23 ~ 24 ms** | **조회 요청마다 집계 쿼리 실행 → DB 비효율** |
-| **그룹 O + 캐시 O(캐시 적재 완료)** | **그룹 집계+캐시 O** | **캐시 히트 → 집계 쿼리 계산 X(측정에서 제외)** | **평균 12~13ms** | **최초 1회만 집계, 이후 캐시 히트 → 조회 시, DB 부하 제거** |
+| 구분 | 집계 방식 | DB 집계 시간 (aggMs)              | 전체 응답 시간 (totalMs) | DB 접근 특성 |
+| --- | --- |-------------------------------| --- | --- |
+| **그룹 X** | **각각 화장실에 평점 집게 수행** | **588 ~ 628 ms**              | **599 ~ 640 ms** | **화장실별 집계 쿼리 반복(N번)** |
+| **그룹 O + 캐시 X** | **그룹 집계+캐시 X** | **9 ~ 11 ms**                 | **23 ~ 24 ms** | **조회 요청마다 집계 쿼리 실행 → DB 비효율** |
+| **그룹 O + 캐시 O(캐시 적재 완료)** | **그룹 집계+캐시 O** | **캐시 히트 → 집계 쿼리 계산 X(측정 제외)** | **12~13ms** | **최초 1회만 집계, 이후 캐시 히트 → 조회 시, DB 부하 제거** |
 
 - **집계 방식**: 리뷰 평균/개수를 N+1 방식 대신 그룹 집계로 계산.
 - **캐시 적용**: 집계 결과를 캐시에 저장해 반복 조회를 줄임.
@@ -142,7 +145,10 @@ src
 ## 테스트
 
 - `RatingAggComparisonTest`: 집계 방식(Per-toilet vs Group vs Cache) 성능 비교 로그 출력.
-- `FunctionalDiagnosticsTest`: 컨트롤러/서비스/리포지토리 진단 로그 출력.
+- `QueryLogDiagnosticsTest`: 캐시 미적용 시 집계 쿼리 반복 실행(SQL_LOG) 증빙.
+- `QueryCountProofTest`: 캐시 적용 전/후 쿼리 카운트(SELECT 수) 비교 증빙.
+- `CacheTtlPerfTest`: 캐시/TTL 성능 측정(aggMs/totalMs) 로그 출력.
+- `CacheConsistencyMismatchTest`: 캐시-DB 불일치 재현 및 TTL 갱신 확인.
 
 
 ## 기술 스택

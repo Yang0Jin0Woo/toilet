@@ -21,7 +21,7 @@ import java.util.Map;
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class RatingAggComparisonTest {
-    private static final int RUNS = 10;
+    private static final int RUNS = 20;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -46,16 +46,19 @@ class RatingAggComparisonTest {
             perToiletNoCache[i] = t1.testMs;
             perToiletNoCacheTotal[i] = t1.totalMs;
             perToiletNoCacheAgg[i] = t1.aggMs;
+            logRun("PER_TOILET", i, t1);
 
             Timing t2 = measureOnce(false, "group", true);
             groupNoCache[i] = t2.testMs;
             groupNoCacheTotal[i] = t2.totalMs;
             groupNoCacheAgg[i] = t2.aggMs;
+            logRun("GROUP", i, t2);
 
             Timing t3 = measureGroupWithCacheWarm();
             groupWithCacheWarm[i] = t3.testMs;
             groupWithCacheWarmTotal[i] = t3.totalMs;
             groupWithCacheWarmAgg[i] = t3.aggMs;
+            logRun("GROUP_WARM", i, t3);
         }
 
         logStats("PER_TOILET", "cache=off", "N+1 queries", perToiletNoCache, perToiletNoCacheTotal, perToiletNoCacheAgg);
@@ -92,13 +95,22 @@ class RatingAggComparisonTest {
     }
 
     private void logStats(String mode, String cache, String access, long[] testTimes, long[] totalTimes, long[] aggTimes) {
-        log.info("TIMING ({}, {}, access={}, aggMs=min~max:{}~{}, totalMs=min~max:{}~{}, testMs=min~max:{}~{})",
+        ModeRange aggRange = modeRange(aggTimes);
+        ModeRange totalRange = modeRange(totalTimes);
+        ModeRange testRange = modeRange(testTimes);
+
+        log.info("TIMING ({}, {}, access={}, aggMs=modeRange:{}~{}, totalMs=modeRange:{}~{}, testMs=modeRange:{}~{})",
                 mode,
                 cache,
                 access,
-                min(aggTimes), max(aggTimes),
-                min(totalTimes), max(totalTimes),
-                min(testTimes), max(testTimes));
+                aggRange.min, aggRange.max,
+                totalRange.min, totalRange.max,
+                testRange.min, testRange.max);
+    }
+
+    private void logRun(String label, int index, Timing timing) {
+        log.info("RUN({} #{}) aggMs={}, totalMs={}, testMs={}",
+                label, index + 1, timing.aggMs, timing.totalMs, timing.testMs);
     }
 
     private long headerLong(ResponseEntity<String> response, String name) {
@@ -121,6 +133,34 @@ class RatingAggComparisonTest {
         long v = Long.MIN_VALUE;
         for (long t : times) v = Math.max(v, t);
         return v;
+    }
+
+    private static ModeRange modeRange(long[] times) {
+        if (times.length == 0) {
+            return new ModeRange(0, 0);
+        }
+        java.util.Map<Long, Integer> freq = new java.util.HashMap<>();
+        int maxFreq = 0;
+        for (long t : times) {
+            int next = freq.getOrDefault(t, 0) + 1;
+            freq.put(t, next);
+            if (next > maxFreq) maxFreq = next;
+        }
+
+        long modeMin = Long.MAX_VALUE;
+        long modeMax = Long.MIN_VALUE;
+        for (var entry : freq.entrySet()) {
+            if (entry.getValue() == maxFreq) {
+                long v = entry.getKey();
+                modeMin = Math.min(modeMin, v);
+                modeMax = Math.max(modeMax, v);
+            }
+        }
+
+        if (modeMin == Long.MAX_VALUE) modeMin = 0;
+        if (modeMax == Long.MIN_VALUE) modeMax = 0;
+
+        return new ModeRange(modeMin, modeMax);
     }
 
     private static long avg(long[] times) {
@@ -149,6 +189,16 @@ class RatingAggComparisonTest {
             this.testMs = testMs;
             this.totalMs = totalMs;
             this.aggMs = aggMs;
+        }
+    }
+
+    private static final class ModeRange {
+        private final long min;
+        private final long max;
+
+        private ModeRange(long min, long max) {
+            this.min = min;
+            this.max = max;
         }
     }
 }

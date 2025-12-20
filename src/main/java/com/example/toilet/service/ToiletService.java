@@ -285,6 +285,7 @@ public class ToiletService {
             // 리뷰가 없는 화장실도 캐시에 0값으로 등록
             missing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, now)));
         }
+        setLastAggMs(aggElapsedMs);
 
         for (Toilet t : toilets) {
             RatingAgg agg = ratingCache.get(t.getId());

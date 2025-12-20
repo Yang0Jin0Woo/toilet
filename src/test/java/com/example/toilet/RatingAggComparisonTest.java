@@ -15,13 +15,15 @@ import java.util.Map;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "slow.query.threshold.ms=100"
+                "slow.query.threshold.ms=100",
+                "sql.log.enabled=false"
         }
 )
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class RatingAggComparisonTest {
-    private static final int RUNS = 20;
+    private static final int RUNS = 10;
+    private static final int WARMUP_RUNS = 2;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -31,33 +33,46 @@ class RatingAggComparisonTest {
 
     @Test
     void measureThreeCases() {
-        long[] perToiletNoCache = new long[RUNS];
-        long[] perToiletNoCacheTotal = new long[RUNS];
-        long[] perToiletNoCacheAgg = new long[RUNS];
-        long[] groupNoCache = new long[RUNS];
-        long[] groupNoCacheTotal = new long[RUNS];
-        long[] groupNoCacheAgg = new long[RUNS];
-        long[] groupWithCacheWarm = new long[RUNS];
-        long[] groupWithCacheWarmTotal = new long[RUNS];
-        long[] groupWithCacheWarmAgg = new long[RUNS];
+        if (RUNS <= WARMUP_RUNS) {
+            throw new IllegalStateException("RUNS must be greater than WARMUP_RUNS");
+        }
+        int measuredRuns = RUNS - WARMUP_RUNS;
+        long[] perToiletNoCache = new long[measuredRuns];
+        long[] perToiletNoCacheTotal = new long[measuredRuns];
+        long[] perToiletNoCacheAgg = new long[measuredRuns];
+        long[] groupNoCache = new long[measuredRuns];
+        long[] groupNoCacheTotal = new long[measuredRuns];
+        long[] groupNoCacheAgg = new long[measuredRuns];
+        long[] groupWithCacheWarm = new long[measuredRuns];
+        long[] groupWithCacheWarmTotal = new long[measuredRuns];
+        long[] groupWithCacheWarmAgg = new long[measuredRuns];
 
         for (int i = 0; i < RUNS; i++) {
             Timing t1 = measureOnce(false, "per_toilet", true);
-            perToiletNoCache[i] = t1.testMs;
-            perToiletNoCacheTotal[i] = t1.totalMs;
-            perToiletNoCacheAgg[i] = t1.aggMs;
+            if (i >= WARMUP_RUNS) {
+                int idx = i - WARMUP_RUNS;
+                perToiletNoCache[idx] = t1.testMs;
+                perToiletNoCacheTotal[idx] = t1.totalMs;
+                perToiletNoCacheAgg[idx] = t1.aggMs;
+            }
             logRun("PER_TOILET", i, t1);
 
             Timing t2 = measureOnce(false, "group", true);
-            groupNoCache[i] = t2.testMs;
-            groupNoCacheTotal[i] = t2.totalMs;
-            groupNoCacheAgg[i] = t2.aggMs;
+            if (i >= WARMUP_RUNS) {
+                int idx = i - WARMUP_RUNS;
+                groupNoCache[idx] = t2.testMs;
+                groupNoCacheTotal[idx] = t2.totalMs;
+                groupNoCacheAgg[idx] = t2.aggMs;
+            }
             logRun("GROUP", i, t2);
 
             Timing t3 = measureGroupWithCacheWarm();
-            groupWithCacheWarm[i] = t3.testMs;
-            groupWithCacheWarmTotal[i] = t3.totalMs;
-            groupWithCacheWarmAgg[i] = t3.aggMs;
+            if (i >= WARMUP_RUNS) {
+                int idx = i - WARMUP_RUNS;
+                groupWithCacheWarm[idx] = t3.testMs;
+                groupWithCacheWarmTotal[idx] = t3.totalMs;
+                groupWithCacheWarmAgg[idx] = t3.aggMs;
+            }
             logRun("GROUP_WARM", i, t3);
         }
 
@@ -99,13 +114,15 @@ class RatingAggComparisonTest {
         ModeRange totalRange = modeRange(totalTimes);
         ModeRange testRange = modeRange(testTimes);
 
-        log.info("TIMING ({}, {}, access={}, aggMs=modeRange:{}~{}, totalMs=modeRange:{}~{}, testMs=modeRange:{}~{})",
+        long aggP95 = percentile(aggTimes, 0.95);
+        long totalP95 = percentile(totalTimes, 0.95);
+        log.info("TIMING ({}, {}, access={}, aggMs=min~p95:{}~{}, totalMs=min~p95:{}~{}, testMs=min~max:{}~{})",
                 mode,
                 cache,
                 access,
-                aggRange.min, aggRange.max,
-                totalRange.min, totalRange.max,
-                testRange.min, testRange.max);
+                min(aggTimes), aggP95,
+                min(totalTimes), totalP95,
+                min(testTimes), max(testTimes));
     }
 
     private void logRun(String label, int index, Timing timing) {
@@ -161,6 +178,16 @@ class RatingAggComparisonTest {
         if (modeMax == Long.MIN_VALUE) modeMax = 0;
 
         return new ModeRange(modeMin, modeMax);
+    }
+
+    private static long percentile(long[] times, double p) {
+        if (times.length == 0) return 0;
+        long[] copy = java.util.Arrays.copyOf(times, times.length);
+        java.util.Arrays.sort(copy);
+        int idx = (int) Math.ceil(p * copy.length) - 1;
+        if (idx < 0) idx = 0;
+        if (idx >= copy.length) idx = copy.length - 1;
+        return copy[idx];
     }
 
     private static long avg(long[] times) {

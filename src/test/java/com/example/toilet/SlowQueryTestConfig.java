@@ -21,6 +21,15 @@ public class SlowQueryTestConfig {
     @Value("${slow.query.threshold.ms:100}")
     private long slowQueryThresholdMs;
 
+    @Value("${sql.log.enabled:true}")
+    private boolean sqlLogEnabled;
+
+    @Value("${sql.log.group-by-only:false}")
+    private boolean sqlGroupByOnly;
+
+    @Value("${sql.log.max-length:300}")
+    private int sqlLogMaxLength;
+
     @Bean
     public BeanPostProcessor dataSourceProxyBeanPostProcessor() {
         return new BeanPostProcessor() {
@@ -41,6 +50,21 @@ public class SlowQueryTestConfig {
                                     log.warn("SLOW QUERY ({} ms) [{}] {}", elapsedMs, beanName, qi.getQuery());
                                 }
                             }
+
+                            if (sqlLogEnabled) {
+                                int count = queryInfoList.size();
+                                log.info("SQL_COUNT [{}] {}", beanName, count);
+                                for (QueryInfo qi : queryInfoList) {
+                                    String sql = normalizeSql(qi.getQuery());
+                                    if (sqlGroupByOnly && !containsGroupBy(sql)) {
+                                        continue;
+                                    }
+                                    log.info("SQL_LOG [{}] {}", beanName, sql);
+                                    if (containsGroupBy(sql)) {
+                                        log.info("GROUP_BY_DETECTED [{}] {}", beanName, sql);
+                                    }
+                                }
+                            }
                         }
                     };
                     return ProxyDataSourceBuilder.create(dataSource)
@@ -51,6 +75,20 @@ public class SlowQueryTestConfig {
                 return bean;
             }
         };
+    }
+
+    private String normalizeSql(String sql) {
+        if (sql == null) return "";
+        String normalized = sql.replaceAll("\\s+", " ").trim();
+        if (sqlLogMaxLength > 0 && normalized.length() > sqlLogMaxLength) {
+            return normalized.substring(0, sqlLogMaxLength) + "...";
+        }
+        return normalized;
+    }
+
+    private boolean containsGroupBy(String sql) {
+        if (sql == null) return false;
+        return sql.toLowerCase().contains(" group by ");
     }
 
     private boolean isProxyDataSource(DataSource dataSource) {

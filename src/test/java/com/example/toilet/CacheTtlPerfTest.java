@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest(properties = {
         "rating.cache.enabled=true",
         "rating.aggregation.mode=group",
-        "rating.cache.ttl-ms=15000",
+        "rating.cache.ttl-ms=3000",
         "spring.test.mockmvc.print=none",
         "slow.query.threshold.ms=999999",
         "sql.log.enabled=false",
@@ -43,7 +43,7 @@ class CacheTtlPerfTest {
     private static final String URL = "/toilets?withRatings=true";
     private static final int WARMUP_ITERATIONS = 10;
     private static final int MEASURE_ROUNDS = 200;
-    private static final int TTL_SECONDS = 15;
+    private static final int TTL_SECONDS = 3;
     private static final long TTL_WAIT_MS = (TTL_SECONDS * 1000L) + 200L;
 
     @Autowired
@@ -277,7 +277,7 @@ class CacheTtlPerfTest {
 
     // runs = cache sql request
     private void printSummary(PhaseMetrics noCache, PhaseMetrics warm) {
-        String header = "runs|avgAggMsAll|avgAggMsHit|aggMsMin~P95|avgTotalMs|totalMsMin~P95|avgTestMs|testMsMin~P95";
+        String header = "runs|avgAggMsAll|aggMsMin~P95|avgTotalMs|totalMsMin~P95|avgTestMs|testMsMin~P95";
         String combined = String.join(" | ",
                 summaryLine(noCache),
                 summaryLine(warm));
@@ -285,19 +285,17 @@ class CacheTtlPerfTest {
     }
 
     private String summaryLine(PhaseMetrics metrics) {
-        Stats aggStats = stats(metrics.aggMs);
+        Stats aggStats = stats(metrics.aggMsAll);
         Stats totalStats = stats(metrics.totalMs);
         Stats testStats = stats(metrics.testMs);
         long avgAggAll = avgLong(metrics.aggMsAll);
-        long avgAggHit = avgLong(metrics.aggMs);
         long avgTotal = avgLong(metrics.totalMs);
         long avgTest = avgLong(metrics.testMs);
         long runs = metrics.sqlRuns;
-        return String.format("%s:%d|%d|%d|%d~%d|%d|%d~%d|%d|%d~%d",
+        return String.format("%s:%d|%d|%d~%d|%d|%d~%d|%d|%d~%d",
                 metrics.name,
                 runs,
-                avgAggAll,
-                avgAggHit, aggStats.min, aggStats.p95,
+                avgAggAll, aggStats.min, aggStats.p95,
                 avgTotal, totalStats.min, totalStats.p95,
                 avgTest, testStats.min, testStats.p95);
     }
@@ -391,6 +389,13 @@ class CacheTtlPerfTest {
         }
     }
 }
+
+
+
+
+
+
+
 
 
 

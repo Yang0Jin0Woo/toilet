@@ -136,6 +136,27 @@ src
 - **집계 방식**: 리뷰 평균/개수를 N+1 방식 대신 그룹 집계로 계산.
 - **캐시 적용**: 집계 결과를 캐시에 저장해 반복 조회를 줄임.
 - **TTL 사용**: 기본 5분 TTL로 만료 후 재집계하여 일관성 보완.
+
+### 전체 정렬 vs 최대 히프 Top-M 비교(누적)
+
+| 구분                            | 전체 정렬 방식      | 힙 기반 Top-M 방식   | 핵심 의미                     |
+| ----------------------------- | ------------- | --------------- | ------------------------- |
+| **렌더링 총 시간 (totalMs)**        | 154,342 ms    | **130,024 ms**  | 힙 방식이 **약 15.8% 더 빠름**    |
+| **거리 계산 시간 (distanceOnlyMs)** | 82,351 ms     | 81,654 ms       | 거리 계산 비용은 **동일 → 공정한 비교** |
+| **알고리즘 오버헤드 (overheadMs)**    | 71,991 ms     | **48,370 ms**   | **대규모 정렬 제거 효과**          |
+| **거리 계산 횟수 검증**               | 1,050,882,000 | 1,050,882,000   | 입력·연산 조건 **완전 동일**        |
+| **주요 연산 특성**                  | 전체 M log M 정렬 | Top-M 유지 (Heap) | **UI 이벤트 다발 환경에 유리**      |
+
+### 전체 정렬(SORT) vs 최대 히프 Top-M 평균 성능 비교(누적/횟수)
+
+| 구분                        | 전체 정렬 방식 (SORT) | 힙 기반 Top-M (HEAP) | 개선 효과         |
+| ------------------------- | --------------- | ----------------- | ------------- |
+| **평균 렌더링 시간 (ms / call)** | 0.662 ms        | **0.576 ms**      | **약 13% 감소**  |
+| 거리 계산 시간 (ms / call)      | 0.355 ms        | 0.360 ms          | 동일 수준         |
+| 알고리즘 오버헤드 (ms / call)     | 0.308 ms        | **0.216 ms**      | **약 30% 감소**  |
+| 주요 연산 특성                  | 전체 M log M 정렬   | Top-M 유지 (Heap)   | 이벤트 다발 환경에 유리 |
+
+- **클라이언트 렌더링 최적화**: 지도 렌더링에서 전체 정렬 대신 최대 히프로 가까운 마커 N개 만 유지하여 연산량과 UI 지연을 줄임.
 - **한계/향후 개선**
   - 캐시 스탬피드 발생 가능
   - 분산 캐시 일관성 이슈
@@ -152,8 +173,9 @@ src
 - `QueryLogDiagnosticsTest`: cache on/off에서 SQL 로그와 GROUP BY 감지 로그 확인.
 - `QueryCountProofTest`: datasource-proxy로 쿼리 타입별 카운트(SELECT/INSERT/UPDATE/DELETE) 증빙.
 - `SlowQueryTestConfig`: 느린 쿼리 경고 및 SQL 로그 공통 설정.
-- `RenderLatencyStatsTest`: `seoultoilet.json` 기준 좌표를 사용해 sort vs heap 선택 알고리즘의 계산 시간 비교.
+- `RenderLatencyStatsTest`: `seoultoilet.json` 기준으로 sort vs Top-N 힙을 비교하며, distance-only 기준 시간과 오버헤드(ms/call) 및 연산 카운트를 로그로 확인.
 - 대부분 `SpringBootTest`로 실행되며 로컬 DB와 초기 데이터 로딩이 필요.
+
 ## 기술 스택
 
 ![Java](https://img.shields.io/badge/Java-007396?style=for-the-badge&logo=openjdk&logoColor=white)
@@ -171,4 +193,3 @@ src
 
 ## AWS EC2 & RDS
 - http://3.36.128.192:8080/map (종료됨)
-

@@ -169,7 +169,7 @@ src
 - `ToiletApplicationTests`
   - Spring 컨텍스트 로딩 스모크 테스트.
 - `RatingAggComparisonTest`
-  - 화장실 목록 API(/toilets?withRatings=true)를 호출하여 화장실 목록과 평균 평점 및 리뷰 수를 리턴하는 서버 응답 시간
+  - 화장실 목록 API을 호출하여 화장실 목록과 평균 평점 및 리뷰 수를 리턴하는 서버 응답 시간
   - per‑toilet 집계 vs group 집계 vs 캐시 히트(group + warm) 응답 시간 비교.(TotalMs, AggMs)
 - `CacheTtlPerfTest`
   - TTL(3초)에서 NO_CACHE/WARM/TTL_EXPIRE_SPIKE 구간 성능 및 캐시 히트/미스 통계 출력.

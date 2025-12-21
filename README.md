@@ -166,15 +166,23 @@ src
 
 ## 테스트
 
-- `ToiletApplicationTests`: Spring 컨텍스트 로딩 스모크 테스트.
-- `RatingAggComparisonTest`: per-toilet vs group vs cache warm 비교, `/toilets?withRatings=true` 응답 헤더 `X-Total-Ms`, `X-Agg-Ms` 로그.
-- `CacheTtlPerfTest`: TTL(3초)에서 NO_CACHE/WARM/TTL_EXPIRE_SPIKE 구간 성능 및 캐시 히트/미스 통계 출력.
-- `CacheConsistencyMismatchTest`: DB 직접 변경 시 캐시/DB 불일치 재현 후 `evict`로 복구 확인.
-- `QueryLogDiagnosticsTest`: cache on/off에서 SQL 로그와 GROUP BY 감지 로그 확인.
-- `QueryCountProofTest`: datasource-proxy로 쿼리 타입별 카운트(SELECT/INSERT/UPDATE/DELETE) 증빙.
-- `SlowQueryTestConfig`: 느린 쿼리 경고 및 SQL 로그 공통 설정.
-- `RenderLatencyStatsTest`: `seoultoilet.json` 기준으로 sort vs Top-N 힙을 비교하며, distance-only 기준 시간과 오버헤드(ms/call) 및 연산 카운트를 로그로 확인.
-- 대부분 `SpringBootTest`로 실행되며 로컬 DB와 초기 데이터 로딩이 필요.
+- `ToiletApplicationTests`
+  - Spring 컨텍스트 로딩 스모크 테스트.
+- `RatingAggComparisonTest`
+  - 화장실 목록 API(/toilets?withRatings=true)를 호출하여 화장실 목록과 평균 평점 및 리뷰 수를 리턴하는 서버 응답 시간
+  - per‑toilet 집계 vs group 집계 vs 캐시 히트(group + warm) 응답 시간 비교.(TotalMs, AggMs)
+- `CacheTtlPerfTest`
+  - TTL(3초)에서 NO_CACHE/WARM/TTL_EXPIRE_SPIKE 구간 성능 및 캐시 히트/미스 통계 출력.
+- `CacheConsistencyMismatchTest`
+  - DB 직접 변경 시 캐시/DB 불일치 재현 후 `evict`로 복구 확인.
+- `QueryLogDiagnosticsTest`
+  - cache on/off에서 SQL 로그와 GROUP BY 감지 로그 확인.
+- `QueryCountProofTest`
+  - datasource-proxy로 쿼리 타입별 카운트(SELECT/INSERT/UPDATE/DELETE) 증빙.
+- `SlowQueryTestConfig`
+  - 느린 쿼리 경고 및 SQL 로그 공통 설정.
+- `RenderLatencyStatsTest`
+  - `seoultoilet.json` 기준으로 sort vs Top-N 힙을 비교하며, distance-only 기준 시간과 오버헤드(ms/call) 및 연산 카운트를 로그로 확인.
 
 ## 기술 스택
 

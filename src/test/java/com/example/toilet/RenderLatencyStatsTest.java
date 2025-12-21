@@ -11,7 +11,6 @@ import org.springframework.core.io.ClassPathResource;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -20,6 +19,8 @@ class RenderLatencyStatsTest {
 
     private static final Logger log = LoggerFactory.getLogger(RenderLatencyStatsTest.class);
     private static final int REPEATS_PER_EVENT = 50;
+    private static final int WARMUP_EVENTS = 1;
+    private static volatile double DISTANCE_SINK = 0.0;
 
     @Test
     void logRenderLatencyStats() throws Exception {
@@ -32,51 +33,79 @@ class RenderLatencyStatsTest {
         List<Event> events = buildEvents(points, points.size(), new int[]{4});
 
         ScenarioResult sortResult = runScenario("RENDER_SORT", events, points, true);
-        log.info("RENDER_SORT totalMs={} samples={} points={} events={} repeats={}",
-                sortResult.totalMs, sortResult.samples, points.size(), events.size(), REPEATS_PER_EVENT);
-        for (EventResult result : sortResult.results) {
-            log.info("RENDER_SORT #{} zoom={} elapsedMs={} repeats={} selected={}",
-                    result.index, result.zoomLevel, result.elapsedMs, REPEATS_PER_EVENT, result.selected);
-        }
+        logScenario(sortResult);
 
         ScenarioResult heapResult = runScenario("RENDER_HEAP", events, points, false);
-        log.info("RENDER_HEAP totalMs={} samples={} points={} events={} repeats={}",
-                heapResult.totalMs, heapResult.samples, points.size(), events.size(), REPEATS_PER_EVENT);
-        for (EventResult result : heapResult.results) {
-            log.info("RENDER_HEAP #{} zoom={} elapsedMs={} repeats={} selected={}",
-                    result.index, result.zoomLevel, result.elapsedMs, REPEATS_PER_EVENT, result.selected);
-        }
+        logScenario(heapResult);
     }
 
     private static ScenarioResult runScenario(String label, List<Event> events, List<Point> points, boolean useSort) {
-        long scenarioStart = System.nanoTime();
+        OperationCounter scenarioCounter = new OperationCounter();
+        int warmupSkippedEvents = 0;
+        int measuredEvents = 0;
+        long scenarioDistanceOnlyNs = 0;
+        long scenarioTotalNs = 0;
+
         int eventIndex = 0;
-        List<EventResult> results = new ArrayList<>(events.size());
         for (Event event : events) {
             eventIndex++;
-            long elapsedNs = 0;
-            int selected = 0;
-            for (int r = 0; r < REPEATS_PER_EVENT; r++) {
-                long start = System.nanoTime();
-                if (useSort) {
-                    selected = renderWithSort(points, event);
-                } else {
-                    selected = renderWithHeap(points, event);
-                }
-                elapsedNs += System.nanoTime() - start;
-            }
-            long elapsedMs = elapsedNs / 1_000_000;
-            if (eventIndex == 1) {
-                // Skip the first measurement after server startup.
+            OperationCounter eventCounter = new OperationCounter();
+            long distanceOnlyNs = measureDistanceOnly(points, event, eventCounter);
+            long totalNs = measureAlgorithm(points, event, useSort, eventCounter);
+
+            if (eventIndex <= WARMUP_EVENTS) {
+                warmupSkippedEvents++;
                 continue;
             }
-            results.add(new EventResult(eventIndex, event.zoomLevel, elapsedMs, selected));
-            if (selected == 0) {
-                System.identityHashCode(event);
+
+            scenarioCounter.add(eventCounter);
+            scenarioDistanceOnlyNs += distanceOnlyNs;
+            scenarioTotalNs += totalNs;
+            measuredEvents++;
+        }
+
+        long totalMs = scenarioTotalNs / 1_000_000;
+        long distanceOnlyMs = scenarioDistanceOnlyNs / 1_000_000;
+        long overheadMs = totalMs - distanceOnlyMs;
+        long overheadOps = scenarioCounter.overheadOps();
+        long opsTotal = scenarioCounter.totalOps();
+
+        return new ScenarioResult(label, totalMs, distanceOnlyMs, overheadMs,
+                points.size(), events.size(), measuredEvents, warmupSkippedEvents, REPEATS_PER_EVENT,
+                opsTotal, scenarioCounter.distanceCalls(), overheadOps, scenarioCounter.sortComparisons(),
+                scenarioCounter.heapComparisons(), scenarioCounter.heapSwaps(),
+                scenarioCounter.finalSortComparisons(), scenarioCounter.listAllocs(),
+                scenarioCounter.pointDistAllocs());
+    }
+
+    private static long measureDistanceOnly(List<Point> points, Event event, OperationCounter counter) {
+        double sum = 0.0;
+        long start = System.nanoTime();
+        for (int r = 0; r < REPEATS_PER_EVENT; r++) {
+            for (Point p : points) {
+                sum += haversine(event.center.lat, event.center.lng, p.lat, p.lng);
             }
         }
-        long totalMs = (System.nanoTime() - scenarioStart) / 1_000_000;
-        return new ScenarioResult(label, totalMs, results.size(), results);
+        long elapsed = System.nanoTime() - start;
+        DISTANCE_SINK += sum;
+        return elapsed;
+    }
+
+    private static long measureAlgorithm(List<Point> points, Event event, boolean useSort, OperationCounter counter) {
+        int selected = 0;
+        long start = System.nanoTime();
+        for (int r = 0; r < REPEATS_PER_EVENT; r++) {
+            if (useSort) {
+                selected = renderWithSort(points, event, counter);
+            } else {
+                selected = renderWithHeap(points, event, counter);
+            }
+        }
+        long elapsed = System.nanoTime() - start;
+        if (selected == 0) {
+            System.identityHashCode(event);
+        }
+        return elapsed;
     }
 
     private static List<Point> loadPoints() throws Exception {
@@ -135,32 +164,43 @@ class RenderLatencyStatsTest {
         return events;
     }
 
-    private static int renderWithSort(List<Point> points, Event event) {
+    private static int renderWithSort(List<Point> points, Event event, OperationCounter counter) {
         List<Point> candidates = points;
         int limit = limitForZoom(event.zoomLevel);
         if (limit <= 0) return 0;
 
+        counter.incListAlloc();
         List<PointDist> all = new ArrayList<>(candidates.size());
         for (Point p : candidates) {
             double dist = haversine(event.center.lat, event.center.lng, p.lat, p.lng);
+            counter.incDistanceCall();
+            counter.incPointDistAlloc();
             all.add(new PointDist(p, dist));
         }
-        all.sort(Comparator.comparingDouble(a -> a.dist));
+        all.sort((a, b) -> {
+            counter.incSortComparison();
+            return Double.compare(a.dist, b.dist);
+        });
         return renderMarkers(all);
     }
 
-    private static int renderWithHeap(List<Point> points, Event event) {
+    private static int renderWithHeap(List<Point> points, Event event, OperationCounter counter) {
         List<Point> candidates = points;
         int limit = limitForZoom(event.zoomLevel);
         if (limit <= 0) return 0;
 
-        BoundedMaxHeap heap = new BoundedMaxHeap(limit);
+        BoundedMaxHeap heap = new BoundedMaxHeap(limit, counter);
         for (Point p : candidates) {
             double dist = haversine(event.center.lat, event.center.lng, p.lat, p.lng);
+            counter.incDistanceCall();
+            counter.incPointDistAlloc();
             heap.push(new PointDist(p, dist));
         }
         List<PointDist> selected = heap.toList();
-        selected.sort(Comparator.comparingDouble(a -> a.dist));
+        selected.sort((a, b) -> {
+            counter.incFinalSortComparison();
+            return Double.compare(a.dist, b.dist);
+        });
         return renderMarkers(selected);
     }
 
@@ -200,9 +240,12 @@ class RenderLatencyStatsTest {
     private static final class BoundedMaxHeap {
         private final List<PointDist> heap = new ArrayList<>();
         private final int limit;
+        private final OperationCounter counter;
 
-        private BoundedMaxHeap(int limit) {
+        private BoundedMaxHeap(int limit, OperationCounter counter) {
             this.limit = limit;
+            this.counter = counter;
+            this.counter.incListAlloc();
         }
 
         private void push(PointDist node) {
@@ -225,6 +268,7 @@ class RenderLatencyStatsTest {
         }
 
         private List<PointDist> toList() {
+            counter.incListAlloc();
             return new ArrayList<>(heap);
         }
 
@@ -232,7 +276,9 @@ class RenderLatencyStatsTest {
             int i = idx;
             while (i > 0) {
                 int p = (i - 1) >>> 1;
+                counter.incHeapComparison();
                 if (heap.get(p).dist >= heap.get(i).dist) break;
+                counter.incHeapSwap();
                 Collections.swap(heap, p, i);
                 i = p;
             }
@@ -245,18 +291,126 @@ class RenderLatencyStatsTest {
                 int l = i * 2 + 1;
                 int r = l + 1;
                 int largest = i;
-                if (l < n && heap.get(l).dist > heap.get(largest).dist) largest = l;
-                if (r < n && heap.get(r).dist > heap.get(largest).dist) largest = r;
+                if (l < n) {
+                    counter.incHeapComparison();
+                    if (heap.get(l).dist > heap.get(largest).dist) largest = l;
+                }
+                if (r < n) {
+                    counter.incHeapComparison();
+                    if (heap.get(r).dist > heap.get(largest).dist) largest = r;
+                }
                 if (largest == i) break;
+                counter.incHeapSwap();
                 Collections.swap(heap, i, largest);
                 i = largest;
             }
         }
     }
 
-    private record EventResult(int index, int zoomLevel, long elapsedMs, int selected) {
+    private record ScenarioResult(String label, long totalMs, long distanceOnlyMs, long overheadMs,
+                                  int points, int events, int samples, int warmupSkippedEvents, int repeats,
+                                  long opsTotal, long distanceCalls, long overheadOps, long sortComparisons,
+                                  long heapComparisons, long heapSwaps, long finalSortComparisons,
+                                  long listAllocs, long pointDistAllocs) {
     }
 
-    private record ScenarioResult(String label, long totalMs, int samples, List<EventResult> results) {
+    private static final class OperationCounter {
+        private long distanceCalls;
+        private long sortComparisons;
+        private long heapComparisons;
+        private long heapSwaps;
+        private long finalSortComparisons;
+        private long listAllocs;
+        private long pointDistAllocs;
+
+        private void incDistanceCall() {
+            distanceCalls++;
+        }
+
+        private void incSortComparison() {
+            sortComparisons++;
+        }
+
+        private void incHeapComparison() {
+            heapComparisons++;
+        }
+
+        private void incHeapSwap() {
+            heapSwaps++;
+        }
+
+        private void incFinalSortComparison() {
+            finalSortComparisons++;
+        }
+
+        private void incListAlloc() {
+            listAllocs++;
+        }
+
+        private void incPointDistAlloc() {
+            pointDistAllocs++;
+        }
+
+        private void add(OperationCounter other) {
+            this.distanceCalls += other.distanceCalls;
+            this.sortComparisons += other.sortComparisons;
+            this.heapComparisons += other.heapComparisons;
+            this.heapSwaps += other.heapSwaps;
+            this.finalSortComparisons += other.finalSortComparisons;
+            this.listAllocs += other.listAllocs;
+            this.pointDistAllocs += other.pointDistAllocs;
+        }
+
+        private long totalOps() {
+            return distanceCalls + overheadOps();
+        }
+
+        private long overheadOps() {
+            return sortComparisons + heapComparisons + heapSwaps + finalSortComparisons + listAllocs + pointDistAllocs;
+        }
+
+        private long distanceCalls() {
+            return distanceCalls;
+        }
+
+        private long sortComparisons() {
+            return sortComparisons;
+        }
+
+        private long heapComparisons() {
+            return heapComparisons;
+        }
+
+        private long heapSwaps() {
+            return heapSwaps;
+        }
+
+        private long finalSortComparisons() {
+            return finalSortComparisons;
+        }
+
+        private long listAllocs() {
+            return listAllocs;
+        }
+
+        private long pointDistAllocs() {
+            return pointDistAllocs;
+        }
+    }
+
+    private static void logScenario(ScenarioResult result) {
+        long expectedDistanceCalls = (long) result.samples * result.repeats * result.points;
+        log.info("{} totalMs={} distanceOnlyMs={} overheadMs={}",
+                result.label, result.totalMs, result.distanceOnlyMs, result.overheadMs);
+        log.info("{} points={} events={} samples={} repeats={} warmupSkippedEvents={}",
+                result.label, result.points, result.events, result.samples, result.repeats, result.warmupSkippedEvents);
+        log.info("{} distanceCalls=({}/{}) opsTotal={} overheadOps={}",
+                result.label, result.distanceCalls, expectedDistanceCalls, result.opsTotal, result.overheadOps);
+        log.info("{} sortComparisons={} finalSortComparisons={}",
+                result.label, result.sortComparisons, result.finalSortComparisons);
+        log.info("{} heapComparisons={} heapSwaps={}",
+                result.label, result.heapComparisons, result.heapSwaps);
+        log.info("{} listAllocs={} pointDistAllocs={}",
+                result.label, result.listAllocs, result.pointDistAllocs);
     }
 }

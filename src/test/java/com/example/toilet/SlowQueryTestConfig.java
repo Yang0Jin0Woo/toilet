@@ -13,10 +13,12 @@ import org.springframework.context.annotation.Bean;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 @TestConfiguration
 public class SlowQueryTestConfig {
     private static final Logger log = LoggerFactory.getLogger(SlowQueryTestConfig.class);
+    private static volatile SlowQueryTestConfig INSTANCE;
 
     @Value("${slow.query.threshold.ms:100}")
     private long slowQueryThresholdMs;
@@ -30,8 +32,33 @@ public class SlowQueryTestConfig {
     @Value("${sql.log.max-length:300}")
     private int sqlLogMaxLength;
 
+    private final AtomicLong sqlCountEvents = new AtomicLong();
+    private final AtomicLong sqlStatementCount = new AtomicLong();
+    private final AtomicLong sqlGroupByCount = new AtomicLong();
+
+    public static long getSqlCountEvents() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlCountEvents.get();
+    }
+
+    public static long getSqlStatementCount() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlStatementCount.get();
+    }
+
+    public static long getSqlGroupByCount() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlGroupByCount.get();
+    }
+
+    public static void resetSqlCounters() {
+        if (INSTANCE != null) {
+            INSTANCE.sqlCountEvents.set(0);
+            INSTANCE.sqlStatementCount.set(0);
+            INSTANCE.sqlGroupByCount.set(0);
+        }
+    }
+
     @Bean
     public BeanPostProcessor dataSourceProxyBeanPostProcessor() {
+        INSTANCE = this;
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String beanName) {
@@ -51,19 +78,27 @@ public class SlowQueryTestConfig {
                                 }
                             }
 
-                            if (sqlLogEnabled) {
-                                int count = queryInfoList.size();
-                                log.info("SQL_COUNT [{}] {}", beanName, count);
-                                for (QueryInfo qi : queryInfoList) {
-                                    String sql = normalizeSql(qi.getQuery());
-                                    if (sqlGroupByOnly && !containsGroupBy(sql)) {
-                                        continue;
-                                    }
-                                    log.info("SQL_LOG [{}] {}", beanName, sql);
-                                    if (containsGroupBy(sql)) {
-                                        log.info("GROUP_BY_DETECTED [{}] {}", beanName, sql);
-                                    }
+                            int count = queryInfoList.size();
+                            sqlCountEvents.incrementAndGet();
+                            sqlStatementCount.addAndGet(count);
+                            for (QueryInfo qi : queryInfoList) {
+                                String sql = normalizeSql(qi.getQuery());
+                                if (containsGroupBy(sql)) {
+                                    sqlGroupByCount.incrementAndGet();
                                 }
+                                if (!sqlLogEnabled) {
+                                    continue;
+                                }
+                                if (sqlGroupByOnly && !containsGroupBy(sql)) {
+                                    continue;
+                                }
+                                log.info("SQL_LOG [{}] {}", beanName, sql);
+                                if (containsGroupBy(sql)) {
+                                    log.info("GROUP_BY_DETECTED [{}] {}", beanName, sql);
+                                }
+                            }
+                            if (sqlLogEnabled) {
+                                log.info("SQL_COUNT [{}] {}", beanName, count);
                             }
                         }
                     };

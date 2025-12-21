@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageRequest;
@@ -25,19 +26,25 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest(properties = {
         "rating.cache.enabled=true",
         "rating.aggregation.mode=group",
-        "rating.cache.ttl-ms=3000"
+        "rating.cache.ttl-ms=15000",
+        "spring.test.mockmvc.print=none",
+        "slow.query.threshold.ms=999999",
+        "sql.log.enabled=false",
+        "logging.level.com.example.toilet.service.ToiletService=WARN",
+        "logging.level.com.example.toilet.controller.ToiletController=WARN",
+        "logging.level.org.springframework.web.servlet.DispatcherServlet=WARN",
+        "logging.level.org.apache.catalina.core.ContainerBase=WARN"
 })
 @Import(SlowQueryTestConfig.class)
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(print = MockMvcPrint.NONE)
 @Slf4j
 class CacheTtlPerfTest {
 
     private static final String URL = "/toilets?withRatings=true";
     private static final int WARMUP_ITERATIONS = 10;
-    private static final int MEASURE_ROUNDS = 50;
-    private static final int TTL_SECONDS = 3;
+    private static final int MEASURE_ROUNDS = 200;
+    private static final int TTL_SECONDS = 15;
     private static final long TTL_WAIT_MS = (TTL_SECONDS * 1000L) + 200L;
-    private static final int TTL_SPIKE_ITERATIONS = 10;
 
     @Autowired
     private MockMvc mockMvc;
@@ -56,9 +63,11 @@ class CacheTtlPerfTest {
         Object originalCacheEnabled = ReflectionTestUtils.getField(toiletService, "ratingCacheEnabled");
         Object originalTtl = ReflectionTestUtils.getField(toiletService, "ratingCacheTtlMs");
         Object originalMode = ReflectionTestUtils.getField(toiletService, "ratingAggregationMode");
+        
 
         try {
             ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", "group");
+            
             ReflectionTestUtils.setField(toiletService, "ratingCacheTtlMs", TTL_SECONDS * 1000L);
 
             clearCache();
@@ -66,23 +75,13 @@ class CacheTtlPerfTest {
 
             PhaseMetrics noCache = new PhaseMetrics("NO_CACHE");
             PhaseMetrics warm = new PhaseMetrics("WARM");
-            PhaseMetrics ttlSpike = new PhaseMetrics("TTL_EXPIRE_SPIKE");
 
-            // 순서 편향과 JIT/캐시 워밍업 영향을 줄이기 위해 교차 실행한다.
             for (int round = 1; round <= MEASURE_ROUNDS; round++) {
                 runNoCacheOnce(noCache, round);
                 runWarmOnce(warm, round);
             }
 
-            for (int i = 1; i <= TTL_SPIKE_ITERATIONS; i++) {
-                runTtlExpireSpikeOnce(ttlSpike, i);
-            }
-
-            printSummary(noCache, warm, ttlSpike);
-
-            if (warm.misses > 0) {
-                log.warn("WARM 구간 캐시 미스 발생: {} (TTL 만료 또는 eviction)", warm.misses);
-            }
+            printSummary(noCache, warm);
 
             verifyTtlConsistency();
         } finally {
@@ -99,7 +98,6 @@ class CacheTtlPerfTest {
     }
 
     private void warmup() throws Exception {
-        // 워밍업도 교차 실행해 구간별 편차를 줄인다.
         for (int i = 1; i <= WARMUP_ITERATIONS; i++) {
             if (i % 2 == 1) {
                 runNoCacheOnce(null, i);
@@ -112,6 +110,9 @@ class CacheTtlPerfTest {
     private void runNoCacheOnce(PhaseMetrics metrics, int iteration) throws Exception {
         ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", false);
         Timing timing = performRequest("NO_CACHE", iteration);
+        if (metrics == null) {
+            return;
+        }
         record(metrics, timing, true);
     }
 
@@ -119,28 +120,8 @@ class CacheTtlPerfTest {
         ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", true);
         Timing timing = performRequest("WARM", iteration);
         boolean miss = isCacheMissExpected();
-        if (miss) {
-            log.warn("TTL_미스_감지 phase=WARM iteration={} aggMs={} totalMs={}",
-                    iteration, timing.aggMs, timing.totalMs);
-            log.info("WARM 캐시 미스: aggMs={}, totalMs={}", timing.aggMs, timing.totalMs);
-        } else {
-            log.info("WARM 캐시 히트");
-        }
-        record(metrics, timing, miss);
-    }
-
-    private void runTtlExpireSpikeOnce(PhaseMetrics metrics, int iteration) throws Exception {
-        ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", true);
-        clearCache();
-        // 캐시를 먼저 채운다.
-        performRequest("TTL_WARMUP", iteration);
-        Thread.sleep(TTL_WAIT_MS);
-
-        Timing timing = performRequest("TTL_EXPIRE_SPIKE", iteration);
-        boolean miss = isCacheMissExpected();
-        if (miss) {
-            log.info("TTL 만료 직 후 재집계 수행 phase=TTL_EXPIRE_SPIKE iteration={} aggMs={} totalMs={}",
-                    iteration, timing.aggMs, timing.totalMs);
+        if (metrics == null) {
+            return;
         }
         record(metrics, timing, miss);
     }
@@ -159,9 +140,6 @@ class CacheTtlPerfTest {
         String totalHeader = result.getResponse().getHeader("X-Total-Ms");
         String aggHeader = result.getResponse().getHeader("X-Agg-Ms");
 
-        log.info("실행({} #{}) totalMsHeader={} aggMs={} elapsedMs={}",
-                label, iteration, totalHeader, aggHeader, elapsedMs);
-
         return new Timing(elapsedMs, parseHeader(totalHeader, elapsedMs), parseHeader(aggHeader, -1));
     }
 
@@ -169,10 +147,15 @@ class CacheTtlPerfTest {
         if (metrics == null) {
             return;
         }
-        metrics.totalMs.add(timing.totalMs);
         if (timing.aggMs >= 0) {
+            metrics.aggMsAll.add(timing.aggMs);
+        }
+        if (timing.aggMs > 0) {
+            metrics.sqlRuns++;
             metrics.aggMs.add(timing.aggMs);
         }
+        metrics.totalMs.add(timing.totalMs);
+        metrics.testMs.add(timing.elapsedMs);
         if (miss) {
             metrics.misses++;
         } else {
@@ -230,22 +213,20 @@ class CacheTtlPerfTest {
     private void verifyTtlConsistency() throws Exception {
         Long toiletId = selectAnyToiletId();
         if (toiletId == null) {
-            log.warn("TTL_정합성 건너뜀: 화장실 데이터 없음");
             return;
         }
 
-        ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", "group");
+        ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", "group");           
         ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", true);
         ReflectionTestUtils.setField(toiletService, "ratingCacheTtlMs", TTL_SECONDS * 1000L);
         clearCache();
 
         AggSnapshot beforeCache = readFromCache(toiletId);
         AggSnapshot beforeDb = readFromDb(toiletId);
-        assertClose(beforeCache, beforeDb, "TTL_정합성 before");
+        assertClose(beforeCache, beforeDb, "TTL_?�합??before");
 
         com.example.toilet.domain.Toilet toilet = toiletRepository.findById(toiletId).orElse(null);
         if (toilet == null) {
-            log.warn("TTL_정합성 건너뜀: toiletId 없음 id={}", toiletId);
             return;
         }
 
@@ -258,7 +239,7 @@ class CacheTtlPerfTest {
         AggSnapshot afterDb = readFromDb(toiletId);
         Thread.sleep(TTL_WAIT_MS);
         AggSnapshot afterCache = readFromCache(toiletId);
-        assertClose(afterCache, afterDb, "TTL_정합성 after");
+        assertClose(afterCache, afterDb, "TTL_?�합??after");
 
         reviewRepository.deleteById(review.getId());
     }
@@ -290,53 +271,46 @@ class CacheTtlPerfTest {
     }
 
     private void assertClose(AggSnapshot cache, AggSnapshot db, String label) {
-        Assertions.assertEquals(db.count, cache.count, label + " count 불일치");
-        Assertions.assertEquals(db.avg, cache.avg, 0.0001, label + " avg 불일치");
-        log.info("{} 확인: avg={}, count={}", label, cache.avg, cache.count);
+        Assertions.assertEquals(db.count, cache.count, label + " count mismatch");
+        Assertions.assertEquals(db.avg, cache.avg, 0.0001, label + " avg mismatch");
     }
 
-    private void printSummary(PhaseMetrics noCache, PhaseMetrics warm, PhaseMetrics ttlSpike) {
-        log.info("성능 요약 - TOTAL_MS (ms)");
-        log.info(String.format("%-18s %5s %6s %6s %8s %6s %6s",
-                "구간", "n", "min", "max", "avg", "p50", "p95"));
-        logStats(noCache, false);
-        logStats(warm, false);
-        logStats(ttlSpike, false);
-
-        log.info("성능 요약 - AGG_MS (ms)");
-        log.info(String.format("%-18s %5s %6s %6s %8s %6s %6s",
-                "구간", "n", "min", "max", "avg", "p50", "p95"));
-        logStats(noCache, true);
-        logStats(warm, true);
-        logStats(ttlSpike, true);
-
-        log.info("캐시 히트/미스 요약");
-        log.info(String.format("%-18s %6s %6s",
-                "구간", "hits", "misses"));
-        log.info(String.format("%-18s %6d %6d", noCache.name, noCache.hits, noCache.misses));
-        log.info(String.format("%-18s %6d %6d", warm.name, warm.hits, warm.misses));
-        log.info(String.format("%-18s %6d %6d", ttlSpike.name, ttlSpike.hits, ttlSpike.misses));
+    // runs = cache sql request
+    private void printSummary(PhaseMetrics noCache, PhaseMetrics warm) {
+        String header = "runs|avgAggMsAll|avgAggMsHit|aggMsMin~P95|avgTotalMs|totalMsMin~P95|avgTestMs|testMsMin~P95";
+        String combined = String.join(" | ",
+                summaryLine(noCache),
+                summaryLine(warm));
+        log.info("TIMING_SUMMARY_200 ttl={} {} {}", TTL_SECONDS, header, combined);
     }
 
-    private void logStats(PhaseMetrics metrics, boolean useAggMs) {
-        List<Long> values = useAggMs ? metrics.aggMs : metrics.totalMs;
-        Stats stats = stats(values);
-        log.info(String.format("%-18s %5d %6s %6s %8s %6s %6s",
+    private String summaryLine(PhaseMetrics metrics) {
+        Stats aggStats = stats(metrics.aggMs);
+        Stats totalStats = stats(metrics.totalMs);
+        Stats testStats = stats(metrics.testMs);
+        long avgAggAll = avgLong(metrics.aggMsAll);
+        long avgAggHit = avgLong(metrics.aggMs);
+        long avgTotal = avgLong(metrics.totalMs);
+        long avgTest = avgLong(metrics.testMs);
+        long runs = metrics.sqlRuns;
+        return String.format("%s:%d|%d|%d|%d~%d|%d|%d~%d|%d|%d~%d",
                 metrics.name,
-                stats.count,
-                format(stats.min),
-                format(stats.max),
-                formatAvg(stats.avg),
-                format(stats.p50),
-                format(stats.p95)));
+                runs,
+                avgAggAll,
+                avgAggHit, aggStats.min, aggStats.p95,
+                avgTotal, totalStats.min, totalStats.p95,
+                avgTest, testStats.min, testStats.p95);
     }
 
-    private String format(long value) {
-        return value < 0 ? "n/a" : Long.toString(value);
-    }
-
-    private String formatAvg(double value) {
-        return value < 0 ? "n/a" : String.format("%.1f", value);
+    private long avgLong(List<Long> values) {
+        if (values.isEmpty()) {
+            return -1;
+        }
+        long sum = 0;
+        for (long value : values) {
+            sum += value;
+        }
+        return sum / values.size();
     }
 
     private Stats stats(List<Long> values) {
@@ -366,6 +340,9 @@ class CacheTtlPerfTest {
         private final String name;
         private final List<Long> totalMs = new ArrayList<>();
         private final List<Long> aggMs = new ArrayList<>();
+        private final List<Long> aggMsAll = new ArrayList<>();
+        private final List<Long> testMs = new ArrayList<>();
+        private long sqlRuns;
         private int hits;
         private int misses;
 
@@ -413,16 +390,20 @@ class CacheTtlPerfTest {
             this.count = count;
         }
     }
-
-    /*
-     * 면접 4줄 요약
-     * 1) NO_CACHE와 WARM을 라운드마다 교차 실행해 순서 편향을 줄였습니다.
-     * 2) TTL 만료 스파이크를 10회 측정해 분산을 확인했습니다.
-     * 3) totalMs와 aggMs를 분리해 응답 시간과 집계 비용을 구분했습니다.
-     * 4) 캐시 히트/미스를 같이 출력해 캐시 효과를 수치로 보여줬습니다.
-     *
-     * 한계 및 향후 개선 아이디어
-     * - 단일 인스턴스 기준 측정이므로 실제 분산 환경 지표와 차이가 있음
-     * - DB 쿼리 카운트/슬로우 쿼리 로그를 결합해 캐시 미스 원인 분석 강화
-     */
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

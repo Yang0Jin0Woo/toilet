@@ -26,7 +26,7 @@ import java.util.Map;
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class RatingAggComparisonTest {
-    private static final int RUNS = 100;
+    private static final int RUNS = 200;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -36,56 +36,86 @@ class RatingAggComparisonTest {
 
     @Test
     void measureThreeCases() {
-        long[] perToiletNoCache = new long[RUNS];
         long[] perToiletNoCacheTotal = new long[RUNS];
         long[] perToiletNoCacheAgg = new long[RUNS];
-        long[] groupNoCache = new long[RUNS];
+        long[] perToiletNoCacheGroupBy = new long[RUNS];
+        long[] perToiletNoCacheSqlEvents = new long[RUNS];
+        long[] perToiletNoCacheSqlStatements = new long[RUNS];
+
         long[] groupNoCacheTotal = new long[RUNS];
         long[] groupNoCacheAgg = new long[RUNS];
-        long[] groupWithCacheWarm = new long[RUNS];
+        long[] groupNoCacheGroupBy = new long[RUNS];
+        long[] groupNoCacheSqlEvents = new long[RUNS];
+        long[] groupNoCacheSqlStatements = new long[RUNS];
+
         long[] groupWithCacheWarmTotal = new long[RUNS];
         long[] groupWithCacheWarmAgg = new long[RUNS];
+        long[] groupWithCacheWarmGroupBy = new long[RUNS];
+        long[] groupWithCacheWarmSqlEvents = new long[RUNS];
+        long[] groupWithCacheWarmSqlStatements = new long[RUNS];
 
         for (int i = 0; i < RUNS; i++) {
             Timing t1 = measureOnce(false, "per_toilet", true);
-            perToiletNoCache[i] = t1.testMs;
             perToiletNoCacheTotal[i] = t1.totalMs;
             perToiletNoCacheAgg[i] = t1.aggMs;
+            perToiletNoCacheGroupBy[i] = t1.groupByCount;
+            perToiletNoCacheSqlEvents[i] = t1.sqlEvents;
+            perToiletNoCacheSqlStatements[i] = t1.sqlStatements;
             // Per-run logging removed; summary only.
 
             Timing t2 = measureOnce(false, "group", true);
-            groupNoCache[i] = t2.testMs;
             groupNoCacheTotal[i] = t2.totalMs;
             groupNoCacheAgg[i] = t2.aggMs;
+            groupNoCacheGroupBy[i] = t2.groupByCount;
+            groupNoCacheSqlEvents[i] = t2.sqlEvents;
+            groupNoCacheSqlStatements[i] = t2.sqlStatements;
             // Per-run logging removed; summary only.
 
             Timing t3 = measureGroupWithCacheWarm();
-            groupWithCacheWarm[i] = t3.testMs;
             groupWithCacheWarmTotal[i] = t3.totalMs;
             groupWithCacheWarmAgg[i] = t3.aggMs;
+            groupWithCacheWarmGroupBy[i] = t3.groupByCount;
+            groupWithCacheWarmSqlEvents[i] = t3.sqlEvents;
+            groupWithCacheWarmSqlStatements[i] = t3.sqlStatements;
             // Per-run logging removed; summary only.
         }
 
-        logStats("PER_TOILET", "cache=off", "N+1 queries", perToiletNoCache, perToiletNoCacheTotal, perToiletNoCacheAgg);
-        logStats("GROUP", "cache=off", "single GROUP BY", groupNoCache, groupNoCacheTotal, groupNoCacheAgg);
-        logStats("GROUP", "cache=on(warm)", "cache hit (0~1 query)", groupWithCacheWarm, groupWithCacheWarmTotal, groupWithCacheWarmAgg);
+        logStats("PER_TOILET", "cache=off", "N+1 queries",
+                perToiletNoCacheTotal, perToiletNoCacheAgg,
+                perToiletNoCacheGroupBy, perToiletNoCacheSqlEvents, perToiletNoCacheSqlStatements);
+        logStats("GROUP", "cache=off", "single GROUP BY",
+                groupNoCacheTotal, groupNoCacheAgg,
+                groupNoCacheGroupBy, groupNoCacheSqlEvents, groupNoCacheSqlStatements);
+        logStats("GROUP", "cache=on(warm)", "cache hit (0~1 query)",
+                groupWithCacheWarmTotal, groupWithCacheWarmAgg,
+                groupWithCacheWarmGroupBy, groupWithCacheWarmSqlEvents, groupWithCacheWarmSqlStatements);
     }
 
     private Timing measureOnce(boolean cacheEnabled, String mode, boolean clearCache) {
         configure(cacheEnabled, mode, clearCache);
-        long startNanos = System.nanoTime();
+        SlowQueryTestConfig.resetSqlCounters();
         ResponseEntity<String> response = restTemplate.getForEntity("/toilets?withRatings=true", String.class);
-        long testMs = (System.nanoTime() - startNanos) / 1_000_000;
-        return new Timing(testMs, headerLong(response, "X-Total-Ms"), headerLong(response, "X-Agg-Ms"));
+        return new Timing(
+                headerLong(response, "X-Total-Ms"),
+                headerLong(response, "X-Agg-Ms"),
+                SlowQueryTestConfig.getSqlGroupByCount(),
+                SlowQueryTestConfig.getSqlCountEvents(),
+                SlowQueryTestConfig.getSqlStatementCount()
+        );
     }
 
     private Timing measureGroupWithCacheWarm() {
         configure(true, "group", true);
         restTemplate.getForEntity("/toilets?withRatings=true", String.class);
-        long startNanos = System.nanoTime();
+        SlowQueryTestConfig.resetSqlCounters();
         ResponseEntity<String> response = restTemplate.getForEntity("/toilets?withRatings=true", String.class);
-        long testMs = (System.nanoTime() - startNanos) / 1_000_000;
-        return new Timing(testMs, headerLong(response, "X-Total-Ms"), headerLong(response, "X-Agg-Ms"));
+        return new Timing(
+                headerLong(response, "X-Total-Ms"),
+                headerLong(response, "X-Agg-Ms"),
+                SlowQueryTestConfig.getSqlGroupByCount(),
+                SlowQueryTestConfig.getSqlCountEvents(),
+                SlowQueryTestConfig.getSqlStatementCount()
+        );
     }
 
     private void configure(boolean cacheEnabled, String mode, boolean clearCache) {
@@ -99,24 +129,40 @@ class RatingAggComparisonTest {
         }
     }
 
-    private void logStats(String mode, String cache, String access, long[] testTimes, long[] totalTimes, long[] aggTimes) {
+    private void logStats(String mode, String cache, String access,
+                          long[] totalTimes, long[] aggTimes,
+                          long[] groupByCounts, long[] sqlEvents, long[] sqlStatements) {
         ModeRange aggRange = modeRange(aggTimes);
         ModeRange totalRange = modeRange(totalTimes);
-        ModeRange testRange = modeRange(testTimes);
+        ModeRange groupByRange = modeRange(groupByCounts);
+        ModeRange sqlEventRange = modeRange(sqlEvents);
+        ModeRange sqlStatementRange = modeRange(sqlStatements);
 
         long aggP95 = percentile(aggTimes, 0.95);
         long totalP95 = percentile(totalTimes, 0.95);
+        long groupByP95 = percentile(groupByCounts, 0.95);
+        long sqlEventP95 = percentile(sqlEvents, 0.95);
+        long sqlStatementP95 = percentile(sqlStatements, 0.95);
         long aggAvg = avg(aggTimes);
         long totalAvg = avg(totalTimes);
-        long testAvg = avg(testTimes);
-        long testP95 = percentile(testTimes, 0.95);
-        log.info("TIMING ({}, {}, access={}, avgAggMs|aggMsMin~P95|avgTotalMs|totalMsMin~P95|avgTestMs|testMsMin~P95:{}|{}~{}|{}|{}~{}|{}|{}~{})",
+        long groupByAvg = avg(groupByCounts);
+        long sqlEventAvg = avg(sqlEvents);
+        long sqlStatementAvg = avg(sqlStatements);
+
+        log.info("TIMING ({}, {}, access={}, avgAggMs|aggMsMin~P95|avgTotalMs|totalMsMin~P95:{}|{}~{}|{}|{}~{})",
                 mode,
                 cache,
                 access,
                 aggAvg, min(aggTimes), aggP95,
-                totalAvg, min(totalTimes), totalP95,
-                testAvg, min(testTimes), testP95);
+                totalAvg, min(totalTimes), totalP95);
+
+        log.info("GROUP_BY_SUMMARY ({}, {}, access={}, avgGroupBy|groupByMin~P95|avgSqlEvents|sqlEventsMin~P95|avgSqlStatements|sqlStatementsMin~P95:{}|{}~{}|{}|{}~{}|{}|{}~{})",
+                mode,
+                cache,
+                access,
+                groupByAvg, min(groupByCounts), groupByP95,
+                sqlEventAvg, min(sqlEvents), sqlEventP95,
+                sqlStatementAvg, min(sqlStatements), sqlStatementP95);
     }
 
     private long headerLong(ResponseEntity<String> response, String name) {
@@ -185,26 +231,19 @@ class RatingAggComparisonTest {
         return times.length == 0 ? 0 : sum / times.length;
     }
 
-    private static long median(long[] times) {
-        if (times.length == 0) return 0;
-        long[] copy = java.util.Arrays.copyOf(times, times.length);
-        java.util.Arrays.sort(copy);
-        int mid = copy.length / 2;
-        if (copy.length % 2 == 1) {
-            return copy[mid];
-        }
-        return (copy[mid - 1] + copy[mid]) / 2;
-    }
-
     private static final class Timing {
-        private final long testMs;
         private final long totalMs;
         private final long aggMs;
+        private final long groupByCount;
+        private final long sqlEvents;
+        private final long sqlStatements;
 
-        private Timing(long testMs, long totalMs, long aggMs) {
-            this.testMs = testMs;
+        private Timing(long totalMs, long aggMs, long groupByCount, long sqlEvents, long sqlStatements) {
             this.totalMs = totalMs;
             this.aggMs = aggMs;
+            this.groupByCount = groupByCount;
+            this.sqlEvents = sqlEvents;
+            this.sqlStatements = sqlStatements;
         }
     }
 

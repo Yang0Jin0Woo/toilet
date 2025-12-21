@@ -400,12 +400,22 @@ class RenderLatencyStatsTest {
 
     private static void logScenario(ScenarioResult result) {
         long expectedDistanceCalls = (long) result.samples * result.repeats * result.points;
+        long totalCalls = (long) result.samples * result.repeats;
+        double avgTotalMsPerCall = totalCalls == 0 ? 0.0 : (double) result.totalMs / totalCalls;
+        double avgDistanceMsPerCall = totalCalls == 0 ? 0.0 : (double) result.distanceOnlyMs / totalCalls;
+        double avgOverheadMsPerCall = totalCalls == 0 ? 0.0 : (double) result.overheadMs / totalCalls;
         log.info("{} totalMs={} distanceOnlyMs={} overheadMs={}",
                 result.label, result.totalMs, result.distanceOnlyMs, result.overheadMs);
         log.info("{} points={} events={} samples={} repeats={} warmupSkippedEvents={}",
                 result.label, result.points, result.events, result.samples, result.repeats, result.warmupSkippedEvents);
         log.info("{} distanceCalls=({}/{}) opsTotal={} overheadOps={}",
                 result.label, result.distanceCalls, expectedDistanceCalls, result.opsTotal, result.overheadOps);
+        log.info("[{}] avg(ms/call): total={}, distance={}, overhead={} (calls={})",
+                result.label,
+                String.format("%.3f", avgTotalMsPerCall),
+                String.format("%.3f", avgDistanceMsPerCall),
+                String.format("%.3f", avgOverheadMsPerCall),
+                totalCalls);
         log.info("{} sortComparisons={} finalSortComparisons={}",
                 result.label, result.sortComparisons, result.finalSortComparisons);
         log.info("{} heapComparisons={} heapSwaps={}",

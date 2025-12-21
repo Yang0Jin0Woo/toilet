@@ -18,7 +18,7 @@ import java.util.Random;
 class RenderLatencyStatsTest {
 
     private static final Logger log = LoggerFactory.getLogger(RenderLatencyStatsTest.class);
-    private static final int REPEATS_PER_EVENT = 50;
+    private static final int REPEATS_PER_EVENT = 10;
     private static final int WARMUP_EVENTS = 1;
     private static volatile double DISTANCE_SINK = 0.0;
 
@@ -30,7 +30,7 @@ class RenderLatencyStatsTest {
             return;
         }
 
-        List<Event> events = buildEvents(points, points.size(), new int[]{4});
+        List<Event> events = buildEvents(points, points.size(), new int[]{3, 5, 6});
 
         ScenarioResult sortResult = runScenario("RENDER_SORT", events, points, true);
         logScenario(sortResult);
@@ -45,6 +45,7 @@ class RenderLatencyStatsTest {
         int measuredEvents = 0;
         long scenarioDistanceOnlyNs = 0;
         long scenarioTotalNs = 0;
+        Map<Integer, LevelStats> levelStats = new java.util.TreeMap<>();
 
         int eventIndex = 0;
         for (Event event : events) {
@@ -62,17 +63,28 @@ class RenderLatencyStatsTest {
             scenarioDistanceOnlyNs += distanceOnlyNs;
             scenarioTotalNs += totalNs;
             measuredEvents++;
+
+            long overheadNs = totalNs - distanceOnlyNs;
+            LevelStats current = levelStats.get(event.zoomLevel);
+            if (current == null) {
+                levelStats.put(event.zoomLevel, new LevelStats(totalNs, distanceOnlyNs, overheadNs, 1));
+            } else {
+                levelStats.put(event.zoomLevel, new LevelStats(
+                        current.totalNs + totalNs,
+                        current.distanceOnlyNs + distanceOnlyNs,
+                        current.overheadNs + overheadNs,
+                        current.samples + 1
+                ));
+            }
         }
 
-        long totalMs = scenarioTotalNs / 1_000_000;
-        long distanceOnlyMs = scenarioDistanceOnlyNs / 1_000_000;
-        long overheadMs = totalMs - distanceOnlyMs;
+        long overheadNs = scenarioTotalNs - scenarioDistanceOnlyNs;
         long overheadOps = scenarioCounter.overheadOps();
         long opsTotal = scenarioCounter.totalOps();
 
-        return new ScenarioResult(label, totalMs, distanceOnlyMs, overheadMs,
+        return new ScenarioResult(label, scenarioTotalNs, scenarioDistanceOnlyNs, overheadNs,
                 points.size(), events.size(), measuredEvents, warmupSkippedEvents, REPEATS_PER_EVENT,
-                opsTotal, scenarioCounter.distanceCalls(), overheadOps, scenarioCounter.sortComparisons(),
+                opsTotal, scenarioCounter.distanceCalls(), overheadOps, scenarioCounter.sortComparisons(), levelStats,
                 scenarioCounter.heapComparisons(), scenarioCounter.heapSwaps(),
                 scenarioCounter.finalSortComparisons(), scenarioCounter.listAllocs(),
                 scenarioCounter.pointDistAllocs());
@@ -307,11 +319,15 @@ class RenderLatencyStatsTest {
         }
     }
 
-    private record ScenarioResult(String label, long totalMs, long distanceOnlyMs, long overheadMs,
+    private record ScenarioResult(String label, long totalNs, long distanceOnlyNs, long overheadNs,
                                   int points, int events, int samples, int warmupSkippedEvents, int repeats,
                                   long opsTotal, long distanceCalls, long overheadOps, long sortComparisons,
+                                  Map<Integer, LevelStats> levelStats,
                                   long heapComparisons, long heapSwaps, long finalSortComparisons,
                                   long listAllocs, long pointDistAllocs) {
+    }
+
+    private record LevelStats(long totalNs, long distanceOnlyNs, long overheadNs, int samples) {
     }
 
     private static final class OperationCounter {
@@ -401,21 +417,41 @@ class RenderLatencyStatsTest {
     private static void logScenario(ScenarioResult result) {
         long expectedDistanceCalls = (long) result.samples * result.repeats * result.points;
         long totalCalls = (long) result.samples * result.repeats;
-        double avgTotalMsPerCall = totalCalls == 0 ? 0.0 : (double) result.totalMs / totalCalls;
-        double avgDistanceMsPerCall = totalCalls == 0 ? 0.0 : (double) result.distanceOnlyMs / totalCalls;
-        double avgOverheadMsPerCall = totalCalls == 0 ? 0.0 : (double) result.overheadMs / totalCalls;
+        long totalMs = result.totalNs / 1_000_000;
+        long distanceOnlyMs = result.distanceOnlyNs / 1_000_000;
+        long overheadMs = result.overheadNs / 1_000_000;
+        double avgTotalMsPerCall = totalCalls == 0 ? 0.0 : (double) result.totalNs / totalCalls / 1_000_000;
+        double avgDistanceMsPerCall = totalCalls == 0 ? 0.0 : (double) result.distanceOnlyNs / totalCalls / 1_000_000;
+        double avgOverheadMsPerCall = totalCalls == 0 ? 0.0 : (double) result.overheadNs / totalCalls / 1_000_000;
+        double avgTotalMsPerEvent = result.samples == 0 ? 0.0 : (double) result.totalNs / result.samples / 1_000_000;
+        double avgDistanceMsPerEvent = result.samples == 0 ? 0.0 : (double) result.distanceOnlyNs / result.samples / 1_000_000;
+        double avgOverheadMsPerEvent = result.samples == 0 ? 0.0 : (double) result.overheadNs / result.samples / 1_000_000;
         log.info("{} totalMs={} distanceOnlyMs={} overheadMs={}",
-                result.label, result.totalMs, result.distanceOnlyMs, result.overheadMs);
+                result.label, totalMs, distanceOnlyMs, overheadMs);
         log.info("{} points={} events={} samples={} repeats={} warmupSkippedEvents={}",
                 result.label, result.points, result.events, result.samples, result.repeats, result.warmupSkippedEvents);
         log.info("{} distanceCalls=({}/{}) opsTotal={} overheadOps={}",
                 result.label, result.distanceCalls, expectedDistanceCalls, result.opsTotal, result.overheadOps);
-        log.info("[{}] avg(ms/call): total={}, distance={}, overhead={} (calls={})",
+        log.info("[{}] avg(ms/event): total={}, distance={}, overhead={} (events={})",
                 result.label,
-                String.format("%.3f", avgTotalMsPerCall),
-                String.format("%.3f", avgDistanceMsPerCall),
-                String.format("%.3f", avgOverheadMsPerCall),
-                totalCalls);
+                String.format("%.2f", avgTotalMsPerEvent),
+                String.format("%.2f", avgDistanceMsPerEvent),
+                String.format("%.2f", avgOverheadMsPerEvent),
+                result.samples);
+        for (Map.Entry<Integer, LevelStats> entry : result.levelStats.entrySet()) {
+            int level = entry.getKey();
+            LevelStats stats = entry.getValue();
+            double avgLevelTotalMs = stats.samples == 0 ? 0.0 : (double) stats.totalNs / stats.samples / 1_000_000;
+            double avgLevelDistanceMs = stats.samples == 0 ? 0.0 : (double) stats.distanceOnlyNs / stats.samples / 1_000_000;
+            double avgLevelOverheadMs = stats.samples == 0 ? 0.0 : (double) stats.overheadNs / stats.samples / 1_000_000;
+            log.info("[{}][level={}] avg(ms/event): total={}, distance={}, overhead={} (events={})",
+                    result.label,
+                    level,
+                    String.format("%.2f", avgLevelTotalMs),
+                    String.format("%.2f", avgLevelDistanceMs),
+                    String.format("%.2f", avgLevelOverheadMs),
+                    stats.samples);
+        }
         log.info("{} sortComparisons={} finalSortComparisons={}",
                 result.label, result.sortComparisons, result.finalSortComparisons);
         log.info("{} heapComparisons={} heapSwaps={}",

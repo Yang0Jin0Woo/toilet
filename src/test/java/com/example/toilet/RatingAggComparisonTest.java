@@ -16,14 +16,17 @@ import java.util.Map;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "slow.query.threshold.ms=100",
-                "sql.log.enabled=false"
+                "sql.log.enabled=false",
+                "logging.level.com.example.toilet.service.ToiletService=WARN",
+                "logging.level.com.example.toilet.controller.ToiletController=WARN",
+                "logging.level.org.springframework.web.servlet.DispatcherServlet=WARN",
+                "logging.level.org.apache.catalina.core.ContainerBase=WARN"
         }
 )
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class RatingAggComparisonTest {
-    private static final int RUNS = 10;
-    private static final int WARMUP_RUNS = 2;
+    private static final int RUNS = 100;
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -33,47 +36,34 @@ class RatingAggComparisonTest {
 
     @Test
     void measureThreeCases() {
-        if (RUNS <= WARMUP_RUNS) {
-            throw new IllegalStateException("RUNS must be greater than WARMUP_RUNS");
-        }
-        int measuredRuns = RUNS - WARMUP_RUNS;
-        long[] perToiletNoCache = new long[measuredRuns];
-        long[] perToiletNoCacheTotal = new long[measuredRuns];
-        long[] perToiletNoCacheAgg = new long[measuredRuns];
-        long[] groupNoCache = new long[measuredRuns];
-        long[] groupNoCacheTotal = new long[measuredRuns];
-        long[] groupNoCacheAgg = new long[measuredRuns];
-        long[] groupWithCacheWarm = new long[measuredRuns];
-        long[] groupWithCacheWarmTotal = new long[measuredRuns];
-        long[] groupWithCacheWarmAgg = new long[measuredRuns];
+        long[] perToiletNoCache = new long[RUNS];
+        long[] perToiletNoCacheTotal = new long[RUNS];
+        long[] perToiletNoCacheAgg = new long[RUNS];
+        long[] groupNoCache = new long[RUNS];
+        long[] groupNoCacheTotal = new long[RUNS];
+        long[] groupNoCacheAgg = new long[RUNS];
+        long[] groupWithCacheWarm = new long[RUNS];
+        long[] groupWithCacheWarmTotal = new long[RUNS];
+        long[] groupWithCacheWarmAgg = new long[RUNS];
 
         for (int i = 0; i < RUNS; i++) {
             Timing t1 = measureOnce(false, "per_toilet", true);
-            if (i >= WARMUP_RUNS) {
-                int idx = i - WARMUP_RUNS;
-                perToiletNoCache[idx] = t1.testMs;
-                perToiletNoCacheTotal[idx] = t1.totalMs;
-                perToiletNoCacheAgg[idx] = t1.aggMs;
-            }
-            logRun("PER_TOILET", i, t1);
+            perToiletNoCache[i] = t1.testMs;
+            perToiletNoCacheTotal[i] = t1.totalMs;
+            perToiletNoCacheAgg[i] = t1.aggMs;
+            // Per-run logging removed; summary only.
 
             Timing t2 = measureOnce(false, "group", true);
-            if (i >= WARMUP_RUNS) {
-                int idx = i - WARMUP_RUNS;
-                groupNoCache[idx] = t2.testMs;
-                groupNoCacheTotal[idx] = t2.totalMs;
-                groupNoCacheAgg[idx] = t2.aggMs;
-            }
-            logRun("GROUP", i, t2);
+            groupNoCache[i] = t2.testMs;
+            groupNoCacheTotal[i] = t2.totalMs;
+            groupNoCacheAgg[i] = t2.aggMs;
+            // Per-run logging removed; summary only.
 
             Timing t3 = measureGroupWithCacheWarm();
-            if (i >= WARMUP_RUNS) {
-                int idx = i - WARMUP_RUNS;
-                groupWithCacheWarm[idx] = t3.testMs;
-                groupWithCacheWarmTotal[idx] = t3.totalMs;
-                groupWithCacheWarmAgg[idx] = t3.aggMs;
-            }
-            logRun("GROUP_WARM", i, t3);
+            groupWithCacheWarm[i] = t3.testMs;
+            groupWithCacheWarmTotal[i] = t3.totalMs;
+            groupWithCacheWarmAgg[i] = t3.aggMs;
+            // Per-run logging removed; summary only.
         }
 
         logStats("PER_TOILET", "cache=off", "N+1 queries", perToiletNoCache, perToiletNoCacheTotal, perToiletNoCacheAgg);
@@ -116,18 +106,17 @@ class RatingAggComparisonTest {
 
         long aggP95 = percentile(aggTimes, 0.95);
         long totalP95 = percentile(totalTimes, 0.95);
-        log.info("TIMING ({}, {}, access={}, aggMs=min~p95:{}~{}, totalMs=min~p95:{}~{}, testMs=min~max:{}~{})",
+        long aggAvg = avg(aggTimes);
+        long totalAvg = avg(totalTimes);
+        long testAvg = avg(testTimes);
+        long testP95 = percentile(testTimes, 0.95);
+        log.info("TIMING ({}, {}, access={}, avgAggMs|aggMsMin~P95|avgTotalMs|totalMsMin~P95|avgTestMs|testMsMin~P95:{}|{}~{}|{}|{}~{}|{}|{}~{})",
                 mode,
                 cache,
                 access,
-                min(aggTimes), aggP95,
-                min(totalTimes), totalP95,
-                min(testTimes), max(testTimes));
-    }
-
-    private void logRun(String label, int index, Timing timing) {
-        log.info("RUN({} #{}) aggMs={}, totalMs={}, testMs={}",
-                label, index + 1, timing.aggMs, timing.totalMs, timing.testMs);
+                aggAvg, min(aggTimes), aggP95,
+                totalAvg, min(totalTimes), totalP95,
+                testAvg, min(testTimes), testP95);
     }
 
     private long headerLong(ResponseEntity<String> response, String name) {

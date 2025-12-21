@@ -167,22 +167,22 @@ src
 ## 테스트
 
 - `ToiletApplicationTests`
-  - Spring 컨텍스트 로딩 스모크 테스트.
+  - Spring 컨텍스트 로딩 스모크 테스트
 - `RatingAggComparisonTest`
   - 화장실 목록 API을 호출하여 화장실 목록과 평균 평점 및 리뷰 수를 리턴하는 서버 응답 시간
   - per‑toilet 집계 vs group 집계 vs 캐시 히트(group + warm) 응답 시간 비교.(TotalMs, AggMs)
 - `CacheTtlPerfTest`
-  - TTL(3초)에서 NO_CACHE/WARM/TTL_EXPIRE_SPIKE 구간 성능 및 캐시 히트/미스 통계 출력.
+  - TTL(3초)에서 캐시 없음/캐시 히트/TTL 만료 후 재집계 비교 후 로그 출력.(Ms, 히트/미스, 스파이크 구간)
 - `CacheConsistencyMismatchTest`
-  - DB 직접 변경 시 캐시/DB 불일치 재현 후 `evict`로 복구 확인.
+  - DB를 직접 변경했을 때 캐시와 DB가 불일치해지는 예시를 캐시 무효화로 일관성 확보
 - `QueryLogDiagnosticsTest`
-  - cache on/off에서 SQL 로그와 GROUP BY 감지 로그 확인.
+  - 캐시 on/off에서 SQL 로그와 GROUP BY 실행 출력하여, 캐시 미적용 시 쿼리 반복 유무 확인
 - `QueryCountProofTest`
-  - datasource-proxy로 쿼리 타입별 카운트(SELECT/INSERT/UPDATE/DELETE) 증빙.
+  - 화장실 목록 조회 시 쿼리 횟수 수집하여 캐시 O/X 일 때, 쿼리 수 변화 출력
 - `SlowQueryTestConfig`
-  - 느린 쿼리 경고 및 SQL 로그 공통 설정.
+  - 느린 쿼리 경고( slow.query.threshold.ms 이상 경고) 및 SQL 로그 기준 설정
 - `RenderLatencyStatsTest`
-  - `seoultoilet.json` 기준으로 sort vs Top-N 힙을 비교하며, distance-only 기준 시간과 오버헤드(ms/call) 및 연산 카운트를 로그로 확인.
+  - `seoultoilet.json` 기준으로 sort vs 최대 히프 비교하고, 순수 거리 계산 시간과 알고리즘 오버헤드 및 연산 횟수 확인
 
 ## 기술 스택
 

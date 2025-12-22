@@ -43,18 +43,24 @@ class RatingAggComparisonTest {
         long[] perToiletNoCacheGroupBy = new long[RUNS];
         long[] perToiletNoCacheSqlEvents = new long[RUNS];
         long[] perToiletNoCacheSqlStatements = new long[RUNS];
+        long[] perToiletNoCacheToiletList = new long[RUNS];
+        long[] perToiletNoCacheRatingAgg = new long[RUNS];
 
         long[] groupNoCacheTotal = new long[RUNS];
         long[] groupNoCacheAgg = new long[RUNS];
         long[] groupNoCacheGroupBy = new long[RUNS];
         long[] groupNoCacheSqlEvents = new long[RUNS];
         long[] groupNoCacheSqlStatements = new long[RUNS];
+        long[] groupNoCacheToiletList = new long[RUNS];
+        long[] groupNoCacheRatingAgg = new long[RUNS];
 
         long[] groupWithCacheWarmTotal = new long[RUNS];
         long[] groupWithCacheWarmAgg = new long[RUNS];
         long[] groupWithCacheWarmGroupBy = new long[RUNS];
         long[] groupWithCacheWarmSqlEvents = new long[RUNS];
         long[] groupWithCacheWarmSqlStatements = new long[RUNS];
+        long[] groupWithCacheWarmToiletList = new long[RUNS];
+        long[] groupWithCacheWarmRatingAgg = new long[RUNS];
 
         for (int i = 0; i < RUNS; i++) {
             Timing t1 = measureOnce(false, "per_toilet", true);
@@ -63,6 +69,8 @@ class RatingAggComparisonTest {
             perToiletNoCacheGroupBy[i] = t1.groupByCount;
             perToiletNoCacheSqlEvents[i] = t1.sqlEvents;
             perToiletNoCacheSqlStatements[i] = t1.sqlStatements;
+            perToiletNoCacheToiletList[i] = t1.toiletListCount;
+            perToiletNoCacheRatingAgg[i] = t1.ratingAggCount;
             // Per-run logging removed; summary only.
 
             Timing t2 = measureOnce(false, "group", true);
@@ -71,6 +79,8 @@ class RatingAggComparisonTest {
             groupNoCacheGroupBy[i] = t2.groupByCount;
             groupNoCacheSqlEvents[i] = t2.sqlEvents;
             groupNoCacheSqlStatements[i] = t2.sqlStatements;
+            groupNoCacheToiletList[i] = t2.toiletListCount;
+            groupNoCacheRatingAgg[i] = t2.ratingAggCount;
             // Per-run logging removed; summary only.
 
             Timing t3 = measureGroupWithCacheWarm();
@@ -79,18 +89,23 @@ class RatingAggComparisonTest {
             groupWithCacheWarmGroupBy[i] = t3.groupByCount;
             groupWithCacheWarmSqlEvents[i] = t3.sqlEvents;
             groupWithCacheWarmSqlStatements[i] = t3.sqlStatements;
+            groupWithCacheWarmToiletList[i] = t3.toiletListCount;
+            groupWithCacheWarmRatingAgg[i] = t3.ratingAggCount;
             // Per-run logging removed; summary only.
         }
 
         logStats("PER_TOILET", "cache=off", "N+1 queries",
                 perToiletNoCacheTotal, perToiletNoCacheAgg,
-                perToiletNoCacheGroupBy, perToiletNoCacheSqlEvents, perToiletNoCacheSqlStatements);
+                perToiletNoCacheGroupBy, perToiletNoCacheSqlEvents, perToiletNoCacheSqlStatements,
+                perToiletNoCacheToiletList, perToiletNoCacheRatingAgg);
         logStats("GROUP", "cache=off", "single GROUP BY",
                 groupNoCacheTotal, groupNoCacheAgg,
-                groupNoCacheGroupBy, groupNoCacheSqlEvents, groupNoCacheSqlStatements);
+                groupNoCacheGroupBy, groupNoCacheSqlEvents, groupNoCacheSqlStatements,
+                groupNoCacheToiletList, groupNoCacheRatingAgg);
         logStats("GROUP", "cache=on(warm)", "cache hit (0~1 query)",
                 groupWithCacheWarmTotal, groupWithCacheWarmAgg,
-                groupWithCacheWarmGroupBy, groupWithCacheWarmSqlEvents, groupWithCacheWarmSqlStatements);
+                groupWithCacheWarmGroupBy, groupWithCacheWarmSqlEvents, groupWithCacheWarmSqlStatements,
+                groupWithCacheWarmToiletList, groupWithCacheWarmRatingAgg);
     }
 
     private Timing measureOnce(boolean cacheEnabled, String mode, boolean clearCache) {
@@ -102,7 +117,9 @@ class RatingAggComparisonTest {
                 headerLong(response, "X-Agg-Ms"),
                 SlowQueryTestConfig.getSqlGroupByCount(),
                 SlowQueryTestConfig.getSqlCountEvents(),
-                SlowQueryTestConfig.getSqlStatementCount()
+                SlowQueryTestConfig.getSqlStatementCount(),
+                SlowQueryTestConfig.getSqlToiletListCount(),
+                SlowQueryTestConfig.getSqlRatingAggCount()
         );
     }
 
@@ -116,7 +133,9 @@ class RatingAggComparisonTest {
                 headerLong(response, "X-Agg-Ms"),
                 SlowQueryTestConfig.getSqlGroupByCount(),
                 SlowQueryTestConfig.getSqlCountEvents(),
-                SlowQueryTestConfig.getSqlStatementCount()
+                SlowQueryTestConfig.getSqlStatementCount(),
+                SlowQueryTestConfig.getSqlToiletListCount(),
+                SlowQueryTestConfig.getSqlRatingAggCount()
         );
     }
 
@@ -133,23 +152,30 @@ class RatingAggComparisonTest {
 
     private void logStats(String mode, String cache, String access,
                           long[] totalTimes, long[] aggTimes,
-                          long[] groupByCounts, long[] sqlEvents, long[] sqlStatements) {
+                          long[] groupByCounts, long[] sqlEvents, long[] sqlStatements,
+                          long[] toiletListCounts, long[] ratingAggCounts) {
         ModeRange aggRange = modeRange(aggTimes);
         ModeRange totalRange = modeRange(totalTimes);
         ModeRange groupByRange = modeRange(groupByCounts);
         ModeRange sqlEventRange = modeRange(sqlEvents);
         ModeRange sqlStatementRange = modeRange(sqlStatements);
+        ModeRange toiletListRange = modeRange(toiletListCounts);
+        ModeRange ratingAggRange = modeRange(ratingAggCounts);
 
         long aggP95 = percentile(aggTimes, 0.95);
         long totalP95 = percentile(totalTimes, 0.95);
         long groupByP95 = percentile(groupByCounts, 0.95);
         long sqlEventP95 = percentile(sqlEvents, 0.95);
         long sqlStatementP95 = percentile(sqlStatements, 0.95);
+        long toiletListP95 = percentile(toiletListCounts, 0.95);
+        long ratingAggP95 = percentile(ratingAggCounts, 0.95);
         long aggAvg = avg(aggTimes);
         long totalAvg = avg(totalTimes);
         long groupByAvg = avg(groupByCounts);
         long sqlEventAvg = avg(sqlEvents);
         long sqlStatementAvg = avg(sqlStatements);
+        long toiletListAvg = avg(toiletListCounts);
+        long ratingAggAvg = avg(ratingAggCounts);
 
         log.info("TIMING ({}, {}, access={}, avgAggMs|aggMsMin~P95|avgTotalMs|totalMsMin~P95:{}|{}~{}|{}|{}~{})",
                 mode,
@@ -165,6 +191,13 @@ class RatingAggComparisonTest {
                 groupByAvg, min(groupByCounts), groupByP95,
                 sqlEventAvg, min(sqlEvents), sqlEventP95,
                 sqlStatementAvg, min(sqlStatements), sqlStatementP95);
+
+        log.info("SQL_BREAKDOWN ({}, {}, access={}, avgToiletList|toiletListMin~P95|avgRatingAgg|ratingAggMin~P95:{}|{}~{}|{}|{}~{})",
+                mode,
+                cache,
+                access,
+                toiletListAvg, min(toiletListCounts), toiletListP95,
+                ratingAggAvg, min(ratingAggCounts), ratingAggP95);
     }
 
     private long headerLong(ResponseEntity<String> response, String name) {
@@ -239,13 +272,18 @@ class RatingAggComparisonTest {
         private final long groupByCount;
         private final long sqlEvents;
         private final long sqlStatements;
+        private final long toiletListCount;
+        private final long ratingAggCount;
 
-        private Timing(long totalMs, long aggMs, long groupByCount, long sqlEvents, long sqlStatements) {
+        private Timing(long totalMs, long aggMs, long groupByCount, long sqlEvents, long sqlStatements,
+                       long toiletListCount, long ratingAggCount) {
             this.totalMs = totalMs;
             this.aggMs = aggMs;
             this.groupByCount = groupByCount;
             this.sqlEvents = sqlEvents;
             this.sqlStatements = sqlStatements;
+            this.toiletListCount = toiletListCount;
+            this.ratingAggCount = ratingAggCount;
         }
     }
 

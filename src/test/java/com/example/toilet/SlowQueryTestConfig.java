@@ -29,6 +29,9 @@ public class SlowQueryTestConfig {
     @Value("${sql.log.group-by-only:false}")
     private boolean sqlGroupByOnly;
 
+    @Value("${sql.log.count-enabled:true}")
+    private boolean sqlCountEnabled;
+
     @Value("${sql.log.max-length:300}")
     private int sqlLogMaxLength;
 
@@ -97,7 +100,7 @@ public class SlowQueryTestConfig {
                                     log.info("GROUP_BY_DETECTED [{}] {}", beanName, sql);
                                 }
                             }
-                            if (sqlLogEnabled) {
+                            if (sqlLogEnabled && sqlCountEnabled) {
                                 log.info("SQL_COUNT [{}] {}", beanName, count);
                             }
                         }

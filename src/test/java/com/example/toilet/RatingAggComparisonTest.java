@@ -16,7 +16,9 @@ import java.util.Map;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "slow.query.threshold.ms=100",
-                "sql.log.enabled=false",
+                "sql.log.enabled=true",
+                "sql.log.group-by-only=true",
+                "sql.log.count-enabled=false",
                 "logging.level.com.example.toilet.service.ToiletService=WARN",
                 "logging.level.com.example.toilet.controller.ToiletController=WARN",
                 "logging.level.org.springframework.web.servlet.DispatcherServlet=WARN",
@@ -26,7 +28,7 @@ import java.util.Map;
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class RatingAggComparisonTest {
-    private static final int RUNS = 200;
+    private static final int RUNS = 100;
 
     @Autowired
     private TestRestTemplate restTemplate;

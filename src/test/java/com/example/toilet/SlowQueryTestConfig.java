@@ -38,6 +38,8 @@ public class SlowQueryTestConfig {
     private final AtomicLong sqlCountEvents = new AtomicLong();
     private final AtomicLong sqlStatementCount = new AtomicLong();
     private final AtomicLong sqlGroupByCount = new AtomicLong();
+    private final AtomicLong sqlToiletListCount = new AtomicLong();
+    private final AtomicLong sqlRatingAggCount = new AtomicLong();
 
     public static long getSqlCountEvents() {
         return INSTANCE == null ? 0L : INSTANCE.sqlCountEvents.get();
@@ -51,11 +53,21 @@ public class SlowQueryTestConfig {
         return INSTANCE == null ? 0L : INSTANCE.sqlGroupByCount.get();
     }
 
+    public static long getSqlToiletListCount() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlToiletListCount.get();
+    }
+
+    public static long getSqlRatingAggCount() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlRatingAggCount.get();
+    }
+
     public static void resetSqlCounters() {
         if (INSTANCE != null) {
             INSTANCE.sqlCountEvents.set(0);
             INSTANCE.sqlStatementCount.set(0);
             INSTANCE.sqlGroupByCount.set(0);
+            INSTANCE.sqlToiletListCount.set(0);
+            INSTANCE.sqlRatingAggCount.set(0);
         }
     }
 
@@ -88,6 +100,12 @@ public class SlowQueryTestConfig {
                                 String sql = normalizeSql(qi.getQuery());
                                 if (containsGroupBy(sql)) {
                                     sqlGroupByCount.incrementAndGet();
+                                }
+                                if (isToiletListQuery(sql)) {
+                                    sqlToiletListCount.incrementAndGet();
+                                }
+                                if (isRatingAggQuery(sql)) {
+                                    sqlRatingAggCount.incrementAndGet();
                                 }
                                 if (!sqlLogEnabled) {
                                     continue;
@@ -127,6 +145,22 @@ public class SlowQueryTestConfig {
     private boolean containsGroupBy(String sql) {
         if (sql == null) return false;
         return sql.toLowerCase().contains(" group by ");
+    }
+
+    private boolean isToiletListQuery(String sql) {
+        if (sql == null) return false;
+        String lowered = sql.toLowerCase();
+        return lowered.contains(" from toilet ")
+                && !lowered.contains(" join ")
+                && !lowered.contains(" count(");
+    }
+
+    private boolean isRatingAggQuery(String sql) {
+        if (sql == null) return false;
+        String lowered = sql.toLowerCase();
+        return lowered.contains(" from review ")
+                && lowered.contains(" avg(")
+                && lowered.contains(" count(");
     }
 
     private boolean isProxyDataSource(DataSource dataSource) {

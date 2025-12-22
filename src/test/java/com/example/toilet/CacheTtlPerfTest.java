@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest(properties = {
         "rating.cache.enabled=true",
         "rating.aggregation.mode=group",
-        "rating.cache.ttl-ms=3000",
+        "rating.cache.ttl-ms=5000",
         "spring.test.mockmvc.print=none",
         "slow.query.threshold.ms=999999",
         "sql.log.enabled=false",
@@ -43,7 +43,7 @@ class CacheTtlPerfTest {
     private static final String URL = "/toilets?withRatings=true";
     private static final int WARMUP_ITERATIONS = 10;
     private static final int MEASURE_ROUNDS = 200;
-    private static final int TTL_SECONDS = 3;
+    private static final int TTL_SECONDS = 5;
     private static final long TTL_WAIT_MS = (TTL_SECONDS * 1000L) + 200L;
 
     @Autowired
@@ -109,6 +109,7 @@ class CacheTtlPerfTest {
 
     private void runNoCacheOnce(PhaseMetrics metrics, int iteration) throws Exception {
         ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", false);
+        SlowQueryTestConfig.resetSqlCounters();
         Timing timing = performRequest("NO_CACHE", iteration);
         if (metrics == null) {
             return;
@@ -118,6 +119,7 @@ class CacheTtlPerfTest {
 
     private void runWarmOnce(PhaseMetrics metrics, int iteration) throws Exception {
         ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", true);
+        SlowQueryTestConfig.resetSqlCounters();
         Timing timing = performRequest("WARM", iteration);
         boolean miss = isCacheMissExpected();
         if (metrics == null) {
@@ -140,7 +142,14 @@ class CacheTtlPerfTest {
         String totalHeader = result.getResponse().getHeader("X-Total-Ms");
         String aggHeader = result.getResponse().getHeader("X-Agg-Ms");
 
-        return new Timing(elapsedMs, parseHeader(totalHeader, elapsedMs), parseHeader(aggHeader, -1));
+        return new Timing(
+                elapsedMs,
+                parseHeader(totalHeader, elapsedMs),
+                parseHeader(aggHeader, -1),
+                SlowQueryTestConfig.getSqlGroupByCount(),
+                SlowQueryTestConfig.getSqlCountEvents(),
+                SlowQueryTestConfig.getSqlStatementCount()
+        );
     }
 
     private void record(PhaseMetrics metrics, Timing timing, boolean miss) {
@@ -156,6 +165,9 @@ class CacheTtlPerfTest {
         }
         metrics.totalMs.add(timing.totalMs);
         metrics.testMs.add(timing.elapsedMs);
+        metrics.groupByCounts.add(timing.groupByCount);
+        metrics.sqlEvents.add(timing.sqlEvents);
+        metrics.sqlStatements.add(timing.sqlStatements);
         if (miss) {
             metrics.misses++;
         } else {
@@ -340,6 +352,9 @@ class CacheTtlPerfTest {
         private final List<Long> aggMs = new ArrayList<>();
         private final List<Long> aggMsAll = new ArrayList<>();
         private final List<Long> testMs = new ArrayList<>();
+        private final List<Long> groupByCounts = new ArrayList<>();
+        private final List<Long> sqlEvents = new ArrayList<>();
+        private final List<Long> sqlStatements = new ArrayList<>();
         private long sqlRuns;
         private int hits;
         private int misses;
@@ -353,11 +368,18 @@ class CacheTtlPerfTest {
         private final long elapsedMs;
         private final long totalMs;
         private final long aggMs;
+        private final long groupByCount;
+        private final long sqlEvents;
+        private final long sqlStatements;
 
-        private Timing(long elapsedMs, long totalMs, long aggMs) {
+        private Timing(long elapsedMs, long totalMs, long aggMs,
+                       long groupByCount, long sqlEvents, long sqlStatements) {
             this.elapsedMs = elapsedMs;
             this.totalMs = totalMs;
             this.aggMs = aggMs;
+            this.groupByCount = groupByCount;
+            this.sqlEvents = sqlEvents;
+            this.sqlStatements = sqlStatements;
         }
     }
 

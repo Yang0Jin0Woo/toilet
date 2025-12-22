@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @SpringBootTest(properties = {
         "rating.cache.enabled=true",
         "rating.aggregation.mode=group",
-        "rating.cache.ttl-ms=5000",
+        "rating.cache.ttl-ms=30000",
         "spring.test.mockmvc.print=none",
         "slow.query.threshold.ms=999999",
         "sql.log.enabled=false",
@@ -42,8 +42,8 @@ class CacheTtlPerfTest {
 
     private static final String URL = "/toilets?withRatings=true";
     private static final int WARMUP_ITERATIONS = 10;
-    private static final int MEASURE_ROUNDS = 200;
-    private static final int TTL_SECONDS = 5;
+    private static final int MEASURE_ROUNDS = 1000;
+    private static final int TTL_SECONDS = 30;
     private static final long TTL_WAIT_MS = (TTL_SECONDS * 1000L) + 200L;
 
     @Autowired

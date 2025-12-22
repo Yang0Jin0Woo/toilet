@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Map Render Benchmark</title>
+
+    <script th:src="@{'https://dapi.kakao.com/v2/maps/sdk.js'
+                + '?appkey=' + ${kakaoApiKey}
+                + '&libraries=services&autoload=false'}"></script>
+
+    <style>
+        :root {
+            --panel-bg: #ffffff;
+            --panel-border: #e2e2e2;
+            --panel-shadow: rgba(0, 0, 0, 0.08);
+            --text: #1b1b1b;
+            --muted: #666666;
+        }
+        body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; color: var(--text); }
+        #map { width: 100%; height: 100vh; }
+        .panel {
+            position: absolute; z-index: 10; top: 12px; left: 12px;
+            background: var(--panel-bg); border: 1px solid var(--panel-border);
+            border-radius: 10px; box-shadow: 0 2px 12px var(--panel-shadow);
+            padding: 10px 12px; min-width: 320px;
+        }
+        .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+        .row label { font-size: 12px; color: var(--muted); }
+        .row input { width: 72px; padding: 4px 6px; }
+        button {
+            padding: 6px 10px; border: 1px solid #cfcfcf; border-radius: 6px;
+            background: #f9f9f9; cursor: pointer; font-size: 12px;
+        }
+        button:hover { background: #f1f1f1; }
+        #status { font-size: 12px; color: var(--muted); margin-top: 6px; }
+        #log { margin-top: 6px; font-size: 12px; white-space: pre-wrap; }
+        .spacer { height: 4px; }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel">
+    <div class="row"><strong>Render Benchmark</strong></div>
+    <div class="row">
+        <label>Samples</label>
+        <input id="samples" type="number" min="1" value="20"/>
+        <label>Warmup</label>
+        <input id="warmup" type="number" min="0" value="1"/>
+        <label>Repeats</label>
+        <input id="repeats" type="number" min="1" value="5"/>
+    </div>
+    <div class="row">
+        <button id="runBoth">Run SORT + HEAP</button>
+        <button id="runSort">Run SORT</button>
+        <button id="runHeap">Run HEAP</button>
+        <button id="runAllSort">All SORT</button>
+        <button id="clear">Clear</button>
+    </div>
+    <div id="status">Loading map...</div>
+    <div id="log"></div>
+</div>
+
+<script th:inline="javascript">
+    /*<![CDATA[*/
+    kakao.maps.load(function() {
+        const dataUrl = /*[[@{/seoultoilet.json}]]*/ '/seoultoilet.json';
+
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const samplesInput = document.getElementById('samples');
+        const warmupInput = document.getElementById('warmup');
+        const repeatsInput = document.getElementById('repeats');
+        const runBothBtn = document.getElementById('runBoth');
+        const runSortBtn = document.getElementById('runSort');
+        const runHeapBtn = document.getElementById('runHeap');
+        const runAllSortBtn = document.getElementById('runAllSort');
+        const clearBtn = document.getElementById('clear');
+
+        let map;
+        let allPoints = [];
+        let markers = [];
+        let distanceSink = 0;
+
+        function setStatus(msg) { statusEl.textContent = msg; }
+        function logLine(msg) {
+            console.log(msg);
+            logEl.textContent = msg;
+        }
+
+        const fallbackLat = 37.566826;
+        const fallbackLng = 126.9786567;
+
+        function initMap(lat, lng) {
+            map = new kakao.maps.Map(document.getElementById('map'), {
+                center: new kakao.maps.LatLng(lat, lng),
+                level: 4
+            });
+            map.setMinLevel(1);
+            map.setMaxLevel(6);
+
+            setStatus('Loading data...');
+            fetch(dataUrl)
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    return res.json();
+                })
+                .then(raw => {
+                    allPoints = normalizeData(raw);
+                    setStatus('Loaded points: ' + allPoints.length);
+                })
+                .catch(err => {
+                    console.error('Data load failed:', err);
+                    setStatus('Data load failed. Check console.');
+                });
+        }
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                pos => initMap(pos.coords.latitude, pos.coords.longitude),
+                () => initMap(fallbackLat, fallbackLng),
+                { enableHighAccuracy: true, timeout: 3000 }
+            );
+        } else {
+            initMap(fallbackLat, fallbackLng);
+        }
+
+        function normalizeData(raw) {
+            let list = [];
+            if (Array.isArray(raw)) list = raw;
+            else if (raw && Array.isArray(raw.DATA)) list = raw.DATA;
+
+            return list.map(item => {
+                const lat = Number(item.coord_y ?? item.coordY ?? item.lat ?? item.latitude);
+                const lng = Number(item.coord_x ?? item.coordX ?? item.lng ?? item.longitude);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+                return { coordY: lat, coordX: lng, name: item.contsName ?? item.name ?? '' };
+            }).filter(Boolean);
+        }
+
+        function haversine(lat1, lng1, lat2, lng2) {
+            const R = 6371000;
+            const toRad = d => d * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLng = toRad(lng2 - lng1);
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                      Math.sin(dLng / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        class BoundedMaxHeap {
+            constructor(limit) { this.h = []; this.limit = limit; }
+            push(node) {
+                this.h.push(node); this._up(this.h.length - 1);
+                if (this.h.length > this.limit) this.pop();
+            }
+            pop() {
+                if (!this.h.length) return null;
+                const top = this.h[0];
+                const last = this.h.pop();
+                if (this.h.length) { this.h[0] = last; this._down(0); }
+                return top;
+            }
+            toArray() { return [...this.h]; }
+            _up(i) {
+                while (i > 0) {
+                    const p = (i - 1) >> 1;
+                    if (this.h[p].dist >= this.h[i].dist) break;
+                    [this.h[p], this.h[i]] = [this.h[i], this.h[p]];
+                    i = p;
+                }
+            }
+            _down(i) {
+                const n = this.h.length;
+                while (true) {
+                    let l = i * 2 + 1, r = l + 1, largest = i;
+                    if (l < n && this.h[l].dist > this.h[largest].dist) largest = l;
+                    if (r < n && this.h[r].dist > this.h[largest].dist) largest = r;
+                    if (largest === i) break;
+                    [this.h[i], this.h[largest]] = [this.h[largest], this.h[i]];
+                    i = largest;
+                }
+            }
+        }
+
+        function limitForZoom(level) {
+            if (level <= 3) return 30;
+            if (level <= 5) return 60;
+            return 80;
+        }
+
+        function clearMarkers() {
+            markers.forEach(m => m.setMap(null));
+            markers = [];
+        }
+
+        function renderMarkers(points) {
+            clearMarkers();
+            points.forEach(p => {
+                const pos = new kakao.maps.LatLng(p.coordY, p.coordX);
+                const marker = new kakao.maps.Marker({ map, position: pos });
+                markers.push(marker);
+            });
+        }
+
+        function filterByBounds(points, bounds) {
+            const sw = bounds.getSouthWest();
+            const ne = bounds.getNorthEast();
+            const minLat = sw.getLat();
+            const maxLat = ne.getLat();
+            const minLng = sw.getLng();
+            const maxLng = ne.getLng();
+            return points.filter(p =>
+                p.coordY >= minLat && p.coordY <= maxLat &&
+                p.coordX >= minLng && p.coordX <= maxLng
+            );
+        }
+
+        function selectWithSort(points, origin, limit) {
+            const arr = new Array(points.length);
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const dist = haversine(origin.lat, origin.lng, p.coordY, p.coordX);
+                arr[i] = { point: p, dist };
+            }
+            arr.sort((a, b) => a.dist - b.dist);
+            return arr.slice(0, limit).map(v => v.point);
+        }
+
+        function selectWithHeap(points, origin, limit) {
+            const heap = new BoundedMaxHeap(limit);
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const dist = haversine(origin.lat, origin.lng, p.coordY, p.coordX);
+                heap.push({ point: p, dist });
+            }
+            return heap.toArray().sort((a, b) => a.dist - b.dist).map(v => v.point);
+        }
+
+        function measureDistanceOnly(points, origin, repeats) {
+            const start = performance.now();
+            for (let r = 0; r < repeats; r++) {
+                for (let i = 0; i < points.length; i++) {
+                    const p = points[i];
+                    distanceSink += haversine(origin.lat, origin.lng, p.coordY, p.coordX);
+                }
+            }
+            return performance.now() - start;
+        }
+
+        function measureTotal(points, origin, limit, repeats, mode) {
+            const start = performance.now();
+            let selected = [];
+            for (let r = 0; r < repeats; r++) {
+                selected = mode === 'SORT'
+                    ? selectWithSort(points, origin, limit)
+                    : selectWithHeap(points, origin, limit);
+            }
+            renderMarkers(selected);
+            return performance.now() - start;
+        }
+
+        function statsMs(samples) {
+            if (!samples.length) return { avg: 0, min: 0, p95: 0 };
+            let sum = 0;
+            let min = Number.POSITIVE_INFINITY;
+            const sorted = [...samples].sort((a, b) => a - b);
+            for (let i = 0; i < sorted.length; i++) {
+                const v = sorted[i];
+                sum += v;
+                if (v < min) min = v;
+            }
+            const n = sorted.length;
+            let idx = Math.ceil(0.95 * n) - 1;
+            if (idx < 0) idx = 0;
+            if (idx >= n) idx = n - 1;
+            const p95 = sorted[idx];
+            return { avg: sum / n, min, p95 };
+        }
+
+        function formatTriple(s) {
+            return s.avg.toFixed(2) + '|' + s.min.toFixed(2) + '~' + s.p95.toFixed(2);
+        }
+
+        function formatPercent(v) {
+            return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+        }
+
+        function percentChange(heapAvg, sortAvg) {
+            if (sortAvg === 0) return 0;
+            return (heapAvg - sortAvg) / sortAvg * 100;
+        }
+
+        async function runBenchmark(mode) {
+            if (!map || !allPoints.length) {
+                setStatus('Map or data not ready.');
+                return null;
+            }
+
+            const samples = Math.max(1, Number(samplesInput.value) || 1);
+            const warmup = Math.max(0, Number(warmupInput.value) || 0);
+            const repeats = Math.max(1, Number(repeatsInput.value) || 1);
+
+            const center = map.getCenter();
+            const origin = { lat: center.getLat(), lng: center.getLng() };
+            const candidates = filterByBounds(allPoints, map.getBounds());
+            const limit = limitForZoom(map.getLevel());
+
+            const totalSamples = [];
+            const distanceSamples = [];
+            const overheadSamples = [];
+
+            for (let i = 0; i < warmup + samples; i++) {
+                const distanceMs = measureDistanceOnly(candidates, origin, repeats);
+                const totalMs = measureTotal(candidates, origin, limit, repeats, mode);
+                const overheadMs = Math.max(0, totalMs - distanceMs);
+
+                if (i < warmup) continue;
+                totalSamples.push(totalMs);
+                distanceSamples.push(distanceMs);
+                overheadSamples.push(overheadMs);
+
+                await new Promise(requestAnimationFrame);
+            }
+
+            return {
+                label: mode,
+                points: candidates.length,
+                events: 1,
+                samples,
+                warmupSkipped: warmup,
+                repeats,
+                totalSamples,
+                distanceSamples,
+                overheadSamples
+            };
+        }
+
+        async function runAllSortBenchmark() {
+            if (!map || !allPoints.length) {
+                setStatus('Map or data not ready.');
+                return null;
+            }
+
+            const samples = Math.max(1, Number(samplesInput.value) || 1);
+            const warmup = Math.max(0, Number(warmupInput.value) || 0);
+            const repeats = Math.max(1, Number(repeatsInput.value) || 1);
+
+            const center = map.getCenter();
+            const origin = { lat: center.getLat(), lng: center.getLng() };
+            const limit = allPoints.length;
+
+            const totalSamples = [];
+            const distanceSamples = [];
+            const overheadSamples = [];
+
+            for (let i = 0; i < warmup + samples; i++) {
+                const distanceMs = measureDistanceOnly(allPoints, origin, repeats);
+                const totalMs = measureTotal(allPoints, origin, limit, repeats, 'SORT');
+                const overheadMs = Math.max(0, totalMs - distanceMs);
+
+                if (i < warmup) continue;
+                totalSamples.push(totalMs);
+                distanceSamples.push(distanceMs);
+                overheadSamples.push(overheadMs);
+
+                await new Promise(requestAnimationFrame);
+            }
+
+            return {
+                label: 'SORT',
+                points: allPoints.length,
+                events: 1,
+                samples,
+                warmupSkipped: warmup,
+                repeats,
+                totalSamples,
+                distanceSamples,
+                overheadSamples
+            };
+        }
+
+        function logSummary(sortResult, heapResult) {
+            const sortTotal = statsMs(sortResult.totalSamples);
+            const sortOver = statsMs(sortResult.overheadSamples);
+            const sortDist = statsMs(sortResult.distanceSamples);
+
+            const heapTotal = statsMs(heapResult.totalSamples);
+            const heapOver = statsMs(heapResult.overheadSamples);
+            const heapDist = statsMs(heapResult.distanceSamples);
+
+            const deltaTotal = percentChange(heapTotal.avg, sortTotal.avg);
+            const deltaOver = percentChange(heapOver.avg, sortOver.avg);
+
+            const line =
+                'RENDER_LATENCY_SUMMARY points=' + sortResult.points +
+                ' events=' + sortResult.events +
+                ' samples=' + sortResult.samples +
+                ' repeats=' + sortResult.repeats +
+                ' warmupSkipped=' + sortResult.warmupSkipped + ' | ' +
+                'SORT total(avg|min~p95)=' + formatTriple(sortTotal) + ' ms, ' +
+                'overhead=' + formatTriple(sortOver) + ' ms, ' +
+                'dist=' + formatTriple(sortDist) + ' ms | ' +
+                'HEAP total(avg|min~p95)=' + formatTriple(heapTotal) + ' ms, ' +
+                'overhead=' + formatTriple(heapOver) + ' ms, ' +
+                'dist=' + formatTriple(heapDist) + ' ms | ' +
+                'DeltaTotal=' + formatPercent(deltaTotal) +
+                ' DeltaOverhead=' + formatPercent(deltaOver) + ' (HEAP vs SORT)';
+
+            logLine(line);
+        }
+
+        runBothBtn.addEventListener('click', async () => {
+            setStatus('Running SORT + HEAP...');
+            const sortResult = await runBenchmark('SORT');
+            const heapResult = await runBenchmark('HEAP');
+            if (sortResult && heapResult) {
+                logSummary(sortResult, heapResult);
+                setStatus('Done. Check console for details.');
+            }
+        });
+
+        runSortBtn.addEventListener('click', async () => {
+            setStatus('Running SORT...');
+            const sortResult = await runBenchmark('SORT');
+            if (sortResult) {
+                const total = statsMs(sortResult.totalSamples);
+                const over = statsMs(sortResult.overheadSamples);
+                const dist = statsMs(sortResult.distanceSamples);
+                logLine(
+                    'SORT total(avg|min~p95)=' + formatTriple(total) + ' ms, ' +
+                    'overhead=' + formatTriple(over) + ' ms, ' +
+                    'dist=' + formatTriple(dist) + ' ms'
+                );
+                setStatus('Done.');
+            }
+        });
+
+        runHeapBtn.addEventListener('click', async () => {
+            setStatus('Running HEAP...');
+            const heapResult = await runBenchmark('HEAP');
+            if (heapResult) {
+                const total = statsMs(heapResult.totalSamples);
+                const over = statsMs(heapResult.overheadSamples);
+                const dist = statsMs(heapResult.distanceSamples);
+                logLine(
+                    'HEAP total(avg|min~p95)=' + formatTriple(total) + ' ms, ' +
+                    'overhead=' + formatTriple(over) + ' ms, ' +
+                    'dist=' + formatTriple(dist) + ' ms'
+                );
+                setStatus('Done.');
+            }
+        });
+
+        runAllSortBtn.addEventListener('click', async () => {
+            setStatus('Running ALL SORT...');
+            const sortResult = await runAllSortBenchmark();
+            if (sortResult) {
+                const total = statsMs(sortResult.totalSamples);
+                const over = statsMs(sortResult.overheadSamples);
+                const dist = statsMs(sortResult.distanceSamples);
+                logLine(
+                    'SORT total(avg|min~p95)=' + formatTriple(total) + ' ms, ' +
+                    'overhead=' + formatTriple(over) + ' ms, ' +
+                    'dist=' + formatTriple(dist) + ' ms'
+                );
+                setStatus('Rendered all points with SORT: ' + sortResult.points);
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            clearMarkers();
+            logEl.textContent = '';
+            setStatus('Markers cleared.');
+        });
+    });
+    /*]]>*/
+</script>
+</body>
+</html>

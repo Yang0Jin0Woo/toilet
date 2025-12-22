@@ -26,4 +26,10 @@ public class MapController {
         model.addAttribute("kakaoApiKey", kakaoApiKey);
         return "map/map";
     }
+
+    @GetMapping("/map-benchmark")
+    public String mapBenchmark(Model model) {
+        model.addAttribute("kakaoApiKey", kakaoApiKey);
+        return "map/map_benchmark";
+    }
 }

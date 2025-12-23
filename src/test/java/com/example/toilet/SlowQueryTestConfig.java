@@ -21,6 +21,7 @@ public class SlowQueryTestConfig {
 
     private final AtomicLong sqlToiletListCount = new AtomicLong();
     private final AtomicLong sqlRatingAggCount = new AtomicLong();
+    private final AtomicLong sqlStatementCount = new AtomicLong();
 
     public static long getSqlToiletListCount() {
         return INSTANCE == null ? 0L : INSTANCE.sqlToiletListCount.get();
@@ -30,10 +31,15 @@ public class SlowQueryTestConfig {
         return INSTANCE == null ? 0L : INSTANCE.sqlRatingAggCount.get();
     }
 
+    public static long getSqlStatementCount() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlStatementCount.get();
+    }
+
     public static void resetSqlCounters() {
         if (INSTANCE != null) {
             INSTANCE.sqlToiletListCount.set(0);
             INSTANCE.sqlRatingAggCount.set(0);
+            INSTANCE.sqlStatementCount.set(0);
         }
     }
 
@@ -52,6 +58,7 @@ public class SlowQueryTestConfig {
 
                         @Override
                         public void afterQuery(ExecutionInfo execInfo, List<QueryInfo> queryInfoList) {
+                            sqlStatementCount.addAndGet(queryInfoList.size());
                             for (QueryInfo qi : queryInfoList) {
                                 String sql = normalizeSql(qi.getQuery());
                                 if (isToiletListQuery(sql)) {

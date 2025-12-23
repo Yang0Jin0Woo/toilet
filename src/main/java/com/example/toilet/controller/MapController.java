@@ -1,6 +1,6 @@
 package com.example.toilet.controller;
 
-import com.example.toilet.domain.Toilet;
+import com.example.toilet.dto.ToiletView;
 import com.example.toilet.service.ToiletService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +21,7 @@ public class MapController {
 
     @GetMapping("/map")
     public String map(Model model) {
-        List<Toilet> toilets = toiletService.getAllToilets();
+        List<ToiletView> toilets = toiletService.getAllToiletViews(false);
         model.addAttribute("toilets", toilets);
         model.addAttribute("kakaoApiKey", kakaoApiKey);
         return "map/map";

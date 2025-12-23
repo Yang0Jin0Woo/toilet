@@ -1,6 +1,6 @@
 package com.example.toilet.controller;
 
-import com.example.toilet.domain.Toilet;
+import com.example.toilet.dto.ToiletView;
 import com.example.toilet.service.ToiletService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,13 +21,11 @@ public class ToiletController {
     private final ToiletService toiletService;
 
     @GetMapping("/toilets")
-    public ResponseEntity<List<Toilet>> getToilets(
+    public ResponseEntity<List<ToiletView>> getToilets(
             @RequestParam(name = "withRatings", defaultValue = "true") boolean withRatings) {
 
         long startNanos = System.nanoTime();
-        List<Toilet> toilets = withRatings
-                ? toiletService.findAllWithRatings()
-                : toiletService.getAllToilets();
+        List<ToiletView> toilets = toiletService.getAllToiletViews(withRatings);
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
 
         if (!withRatings) {

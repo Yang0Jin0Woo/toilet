@@ -265,9 +265,9 @@ class CacheTtlPerfTest {
     private AggSnapshot readFromCache(Long toiletId) {
         var list = toiletService.findAllWithRatings();
         for (var t : list) {
-            if (toiletId.equals(t.getId())) {
-                double avg = t.getAvgRating() == null ? 0.0 : t.getAvgRating();
-                long cnt = t.getReviewCount() == null ? 0L : t.getReviewCount();
+            if (toiletId.equals(t.id())) {
+                double avg = t.avgRating();
+                long cnt = t.reviewCount();
                 return new AggSnapshot(avg, cnt);
             }
         }

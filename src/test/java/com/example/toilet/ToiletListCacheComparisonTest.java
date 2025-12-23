@@ -1,6 +1,6 @@
 package com.example.toilet;
 
-import com.example.toilet.domain.Toilet;
+import com.example.toilet.dto.ToiletView;
 import com.example.toilet.service.ToiletService;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -136,7 +136,7 @@ class ToiletListCacheComparisonTest {
     @RestController
     static class CachedToiletController {
         private final ToiletService toiletService;
-        private volatile List<Toilet> cached;
+        private volatile List<ToiletView> cached;
         private volatile long cachedAtMs;
 
         CachedToiletController(ToiletService toiletService) {
@@ -147,13 +147,13 @@ class ToiletListCacheComparisonTest {
         private long listCacheTtlMs;
 
         @GetMapping("/toilets-cached")
-        public ResponseEntity<List<Toilet>> getToiletsCached() {
+        public ResponseEntity<List<ToiletView>> getToiletsCached() {
             long startNanos = System.nanoTime();
             long now = System.currentTimeMillis();
-            List<Toilet> toilets = cached;
+            List<ToiletView> toilets = cached;
             boolean hit = true;
             if (toilets == null || isExpired(now)) {
-                toilets = toiletService.getAllToilets();
+                toilets = toiletService.getAllToiletViews(false);
                 cached = toilets;
                 cachedAtMs = now;
                 hit = false;

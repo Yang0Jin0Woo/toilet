@@ -82,6 +82,9 @@ src
  │   │   │   ├─ MapController.java
  │   │   │   ├─ ReviewController.java
  │   │   │   └─ ToiletController.java
+ │   │   ├─ dto
+ │   │   │   ├─ ToiletSnapshot.java
+ │   │   │   └─ ToiletView.java
  │   │   ├─ domain
  │   │   │   ├─ Review.java
  │   │   │   └─ Toilet.java
@@ -107,8 +110,13 @@ src
          ├─ QueryLogDiagnosticsTest.java
          ├─ RatingAggComparisonTest.java
          ├─ SlowQueryTestConfig.java
+         ├─ ToiletListCacheComparisonTest.java
          └─ ToiletApplicationTests.java
 ```
+
+- `dto`
+  - `ToiletSnapshot`: 리스트 캐시용 스냅샷(엔티티 미사용)
+  - `ToiletView`: API 응답용 DTO(평점/리뷰 수 포함)
 
 
 ## 화면 구성
@@ -148,7 +156,7 @@ src
 | 그룹 O + 캐시 X        | 1               | 1              | 8 ~ 13 ms(10 ms)     | 20 ~ 29 ms(23 ms) | 집계 쿼리 1회 수준(단, 요청 당 1회)              |
 
 - 캐시 적용
-  - 집계 결과를 캐시에 저장해 반복 조회를 줄임
+  - 집계 결과를 캐시에 저장해 반복 조회를 줄임(+ 렌더링 최적화 이후 리스트 캐시 적용)
 
 | 구분 | DB 접근 횟수(Group by)       | 그룹 집계 시간                        | 전체 응답 시간              |
 |--------------------------|--------------------------|---------------------------------|-----------------------|
@@ -195,7 +203,7 @@ src
   - 화장실 목록 API을 호출하여 화장실 목록과 평균 평점 및 리뷰 수를 리턴하는 서버 응답 시간
   - per‑toilet 집계 vs group 집계 vs 캐시 히트(group + warm) 응답 시간 비교.(TotalMs, AggMs)
 - `CacheTtlPerfTest`
-  - TTL(3초)에서 캐시 없음/캐시 히트/TTL 만료 후 재집계 비교 후 로그 출력.(Ms, 히트/미스, 스파이크 구간)
+  - TTL(3초)에서 캐시 없음/캐시 히트/TTL 만료 후 재집계 비교 후 로그 출력.(TotalMs, 히트/미스, 스파이크 구간)
 - `CacheConsistencyMismatchTest`
   - DB를 직접 변경했을 때 캐시와 DB가 불일치해지는 예시를 캐시 무효화로 일관성 확보
 - `QueryLogDiagnosticsTest`
@@ -206,6 +214,9 @@ src
   - 느린 쿼리 경고( slow.query.threshold.ms 이상 경고) 및 SQL 로그 기준 설정
 - `RenderLatencyStatsTest`
   - `seoultoilet.json` 기준으로 sort vs 최대 히프 비교하고, 순수 거리 계산 시간과 알고리즘 오버헤드 및 연산 횟수 확인
+- `ToiletListCacheComparisonTest`
+  - 리스트 캐시 적용 전/후 평균/최소~p95 비교 로그 출력(TTL 기반)
+
 
 ## 기술 스택
 

@@ -235,7 +235,7 @@ class CacheTtlPerfTest {
 
         AggSnapshot beforeCache = readFromCache(toiletId);
         AggSnapshot beforeDb = readFromDb(toiletId);
-        assertClose(beforeCache, beforeDb, "TTL_?�합??before");
+        assertClose(beforeCache, beforeDb, "TTL_consistency_before");
 
         com.example.toilet.domain.Toilet toilet = toiletRepository.findById(toiletId).orElse(null);
         if (toilet == null) {
@@ -251,7 +251,7 @@ class CacheTtlPerfTest {
         AggSnapshot afterDb = readFromDb(toiletId);
         Thread.sleep(TTL_WAIT_MS);
         AggSnapshot afterCache = readFromCache(toiletId);
-        assertClose(afterCache, afterDb, "TTL_?�합??after");
+        assertClose(afterCache, afterDb, "TTL_consistency_after");
 
         reviewRepository.deleteById(review.getId());
     }

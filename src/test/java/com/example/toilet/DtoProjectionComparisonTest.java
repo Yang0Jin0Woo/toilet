@@ -31,7 +31,7 @@ import java.util.List;
 @Slf4j
 class DtoProjectionComparisonTest {
     private static final int RUNS = 30;
-    private static final int RATING_SAMPLE = 200;
+    private static final int RATING_SAMPLE = 4557;
 
     @Autowired
     private ToiletRepository toiletRepository;

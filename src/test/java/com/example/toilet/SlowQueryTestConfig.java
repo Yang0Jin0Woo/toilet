@@ -23,6 +23,10 @@ public class SlowQueryTestConfig {
     private final AtomicLong sqlRatingAggCount = new AtomicLong();
     private final AtomicLong sqlStatementCount = new AtomicLong();
 
+    private final AtomicLong sqlToiletListElapsedMs = new AtomicLong();
+    private final AtomicLong sqlRatingAggElapsedMs = new AtomicLong();
+    private final AtomicLong sqlStatementElapsedMs = new AtomicLong();
+
     public static long getSqlToiletListCount() {
         return INSTANCE == null ? 0L : INSTANCE.sqlToiletListCount.get();
     }
@@ -35,11 +39,26 @@ public class SlowQueryTestConfig {
         return INSTANCE == null ? 0L : INSTANCE.sqlStatementCount.get();
     }
 
+    public static long getSqlToiletListElapsedMs() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlToiletListElapsedMs.get();
+    }
+
+    public static long getSqlRatingAggElapsedMs() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlRatingAggElapsedMs.get();
+    }
+
+    public static long getSqlStatementElapsedMs() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlStatementElapsedMs.get();
+    }
+
     public static void resetSqlCounters() {
         if (INSTANCE != null) {
             INSTANCE.sqlToiletListCount.set(0);
             INSTANCE.sqlRatingAggCount.set(0);
             INSTANCE.sqlStatementCount.set(0);
+            INSTANCE.sqlToiletListElapsedMs.set(0);
+            INSTANCE.sqlRatingAggElapsedMs.set(0);
+            INSTANCE.sqlStatementElapsedMs.set(0);
         }
     }
 
@@ -58,14 +77,18 @@ public class SlowQueryTestConfig {
 
                         @Override
                         public void afterQuery(ExecutionInfo execInfo, List<QueryInfo> queryInfoList) {
+                            long elapsedMs = execInfo.getElapsedTime();
                             sqlStatementCount.addAndGet(queryInfoList.size());
+                            sqlStatementElapsedMs.addAndGet(elapsedMs);
                             for (QueryInfo qi : queryInfoList) {
                                 String sql = normalizeSql(qi.getQuery());
                                 if (isToiletListQuery(sql)) {
                                     sqlToiletListCount.incrementAndGet();
+                                    sqlToiletListElapsedMs.addAndGet(elapsedMs);
                                 }
                                 if (isRatingAggQuery(sql)) {
                                     sqlRatingAggCount.incrementAndGet();
+                                    sqlRatingAggElapsedMs.addAndGet(elapsedMs);
                                 }
                             }
                         }
@@ -82,7 +105,7 @@ public class SlowQueryTestConfig {
 
     private String normalizeSql(String sql) {
         if (sql == null) return "";
-        return sql.replaceAll("\\s+", " ").trim();
+        return sql.replaceAll("\s+", " ").trim();
     }
 
     private boolean isToiletListQuery(String sql) {

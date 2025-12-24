@@ -201,16 +201,16 @@ public class ToiletService {
     }
 
     private List<ToiletSnapshot> loadSnapshotsFromDb() {
-        return toiletRepository.findAll().stream()
-                .map(t -> new ToiletSnapshot(
-                        t.getId(),
-                        t.getContsName(),
-                        t.getAddrNew(),
-                        t.getAddrOld(),
-                        t.getCoordX(),
-                        t.getCoordY(),
-                        t.getValue04(),
-                        t.getValue05()
+        return toiletRepository.findAllSnapshots().stream()
+                .map(p -> new ToiletSnapshot(
+                        p.getId(),
+                        p.getContsName(),
+                        p.getAddrNew(),
+                        p.getAddrOld(),
+                        p.getCoordX(),
+                        p.getCoordY(),
+                        p.getValue04(),
+                        p.getValue05()
                 ))
                 .toList();
     }
@@ -458,3 +458,4 @@ public class ToiletService {
     private record AggResult(List<ToiletView> views, long aggMs) {}
     private record AggSnapshot(double avg, long cnt) {}
 }
+

@@ -214,6 +214,14 @@ src
 
 - `ToiletApplicationTests`
   - Spring 컨텍스트 로딩 스모크 테스트
+- `GroupAggComparisonTest`
+  - 리뷰 평균/개수 집계 방식 비교(그룹 X vs 그룹 O), 100회 실행, 캐시 X
+- `GroupCacheComparisonTest`
+  - 그룹 집계 + 캐시 적용 전/후 비교, 100회 실행, TTL= 60초 & 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
+- `DtoProjectionComparisonTest`
+  - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 성능 비교, 30회 실행
+- `SlowQueryTestConfig`
+  - DataSource 프록시로 SQL 횟수/시간을 카운트하는 테스트용 설정
 
 
 ## 기술 스택

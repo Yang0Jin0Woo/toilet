@@ -76,6 +76,7 @@
 ```
 src
  ├─ main
+ │   ├─ generated
  │   ├─ java/com/example/toilet
  │   │   ├─ ToiletApplication.java
  │   │   ├─ controller
@@ -98,19 +99,19 @@ src
  │       ├─ application.properties
  │       ├─ schema.sql
  │       ├─ seoultoilet.json
+ │       ├─ static
+ │       │   └─ seoultoilet.json
  │       └─ templates
  │           └─ map
  │               ├─ map.html
+ │               ├─ map_benchmark.html
  │               └─ reviews.html
  └─ test
      └─ java/com/example/toilet
-         ├─ CacheConsistencyMismatchTest.java
-         ├─ CacheTtlPerfTest.java
-         ├─ QueryCountProofTest.java
-         ├─ QueryLogDiagnosticsTest.java
-         ├─ RatingAggComparisonTest.java
+         ├─ DtoProjectionComparisonTest.java
+         ├─ GroupAggComparisonTest.java
+         ├─ GroupCacheComparisonTest.java
          ├─ SlowQueryTestConfig.java
-         ├─ ToiletListCacheComparisonTest.java
          └─ ToiletApplicationTests.java
 ```
 

@@ -29,7 +29,7 @@ public class ReviewService {
     public Review save(Review r) {
         Review saved = reviewRepository.save(r);
         // 캐시 업데이트 → 집계 쿼리 재실행 방지
-        toiletService.applyReviewDelta(saved.getToilet().getId(), saved.getRating());
+        toiletService.evictRating(saved.getToilet().getId());
         return saved;
     }
 
@@ -41,11 +41,10 @@ public class ReviewService {
     public Review update(Long reviewId, int newRating, String newComment) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
-        int oldRating = review.getRating();
         review.setRating(newRating);
         review.setComment(newComment);
         Review saved = reviewRepository.save(review);
-        toiletService.applyReviewUpdate(review.getToilet().getId(), oldRating, newRating);
+        toiletService.evictRating(review.getToilet().getId());
         return saved;
     }
 
@@ -57,7 +56,7 @@ public class ReviewService {
     public void delete(Long reviewId) {
         reviewRepository.findById(reviewId).ifPresent(r -> {
             reviewRepository.delete(r);
-            toiletService.applyReviewDelta(r.getToilet().getId(), -r.getRating(), -1);
+            toiletService.evictRating(r.getToilet().getId());
         });
     }
 
@@ -72,7 +71,7 @@ public class ReviewService {
         int next = (review.getReportCount() == null ? 0 : review.getReportCount()) + 1;
         if (next >= blockThreshold) {
             // 임계치 초과 시 리뷰를 삭제하고 캐시를 O(1)로 갱신
-            toiletService.applyReviewDelta(review.getToilet().getId(), -review.getRating(), -1);
+            toiletService.evictRating(review.getToilet().getId());
             reviewRepository.delete(review);
             return true; // deleted
         } else {

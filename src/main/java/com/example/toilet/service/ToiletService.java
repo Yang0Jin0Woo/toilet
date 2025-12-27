@@ -67,6 +67,12 @@ public class ToiletService {
     @Value("${rating.aggregation.mode:group}")
     private String ratingAggregationMode;
 
+    @Value("${rating.cache.lock.enabled:true}")
+    private boolean ratingCacheLockEnabled;
+
+    @Value("${rating.cache.lock-recheck.enabled:true}")
+    private boolean ratingCacheLockRecheckEnabled;
+
     @Value("${list.cache.ttl-ms:300000}")
     private long listCacheTtlMs;
 
@@ -361,36 +367,50 @@ public class ToiletService {
         }
 
         long aggStart = System.nanoTime();
-        synchronized (ratingCacheLock) {
+        if (ratingCacheLockEnabled) {
+            synchronized (ratingCacheLock) {
+                long now2 = System.currentTimeMillis();
+                List<Long> targets = missing;
+                if (ratingCacheLockRecheckEnabled) {
+                    targets = missing.stream()
+                            .filter(id -> {
+                                RatingAgg agg = ratingCache.get(id);
+                                return agg == null || agg.isStale(now2, ratingCacheTtlMs);
+                            })
+                            .toList();
+                    if (targets.isEmpty()) {
+                        return 0L;
+                    }
+                }
+                refreshMissingRatings(targets, mode, now2);
+            }
+        } else {
             long now2 = System.currentTimeMillis();
-            List<Long> stillMissing = missing.stream()
-                    .filter(id -> {
-                        RatingAgg agg = ratingCache.get(id);
-                        return agg == null || agg.isStale(now2, ratingCacheTtlMs);
-                    })
-                    .toList();
-            if (stillMissing.isEmpty()) {
-                return 0L;
-            }
-
-            if (mode == RatingAggMode.PER_TOILET) {
-                for (Long id : stillMissing) {
-                    var a = reviewRepository.aggregateByToiletId(id);
-                    double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
-                    long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
-                    ratingCache.put(id, new RatingAgg(avg * cnt, cnt, now2));
-                }
-            } else {
-                var aggs = reviewRepository.aggregateByToiletIds(stillMissing);
-                for (var a : aggs) {
-                    double avg = a.getAvg() != null ? a.getAvg() : 0.0;
-                    long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-                    ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt, now2));
-                }
-            }
-            stillMissing.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, now2)));
+            refreshMissingRatings(missing, mode, now2);
         }
         return (System.nanoTime() - aggStart) / 1_000_000;
+    }
+
+    private void refreshMissingRatings(List<Long> targets, RatingAggMode mode, long nowMs) {
+        if (targets.isEmpty()) {
+            return;
+        }
+        if (mode == RatingAggMode.PER_TOILET) {
+            for (Long id : targets) {
+                var a = reviewRepository.aggregateByToiletId(id);
+                double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
+                long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
+                ratingCache.put(id, new RatingAgg(avg * cnt, cnt, nowMs));
+            }
+        } else {
+            var aggs = reviewRepository.aggregateByToiletIds(targets);
+            for (var a : aggs) {
+                double avg = a.getAvg() != null ? a.getAvg() : 0.0;
+                long cnt = a.getCnt() != null ? a.getCnt() : 0L;
+                ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt, nowMs));
+            }
+        }
+        targets.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, nowMs)));
     }
 
     /**

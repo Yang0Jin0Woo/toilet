@@ -26,6 +26,8 @@ public class SlowQueryTestConfig {
     private final AtomicLong sqlToiletListElapsedMs = new AtomicLong();
     private final AtomicLong sqlRatingAggElapsedMs = new AtomicLong();
     private final AtomicLong sqlStatementElapsedMs = new AtomicLong();
+    private final AtomicLong sqlInFlight = new AtomicLong();
+    private final AtomicLong sqlInFlightMax = new AtomicLong();
 
     public static long getSqlToiletListCount() {
         return INSTANCE == null ? 0L : INSTANCE.sqlToiletListCount.get();
@@ -51,6 +53,10 @@ public class SlowQueryTestConfig {
         return INSTANCE == null ? 0L : INSTANCE.sqlStatementElapsedMs.get();
     }
 
+    public static long getSqlInFlightMax() {
+        return INSTANCE == null ? 0L : INSTANCE.sqlInFlightMax.get();
+    }
+
     public static void resetSqlCounters() {
         if (INSTANCE != null) {
             INSTANCE.sqlToiletListCount.set(0);
@@ -59,6 +65,8 @@ public class SlowQueryTestConfig {
             INSTANCE.sqlToiletListElapsedMs.set(0);
             INSTANCE.sqlRatingAggElapsedMs.set(0);
             INSTANCE.sqlStatementElapsedMs.set(0);
+            INSTANCE.sqlInFlight.set(0);
+            INSTANCE.sqlInFlightMax.set(0);
         }
     }
 
@@ -72,7 +80,9 @@ public class SlowQueryTestConfig {
                     QueryExecutionListener listener = new QueryExecutionListener() {
                         @Override
                         public void beforeQuery(ExecutionInfo execInfo, List<QueryInfo> queryInfoList) {
-                            // no-op
+                            long size = queryInfoList == null ? 0L : queryInfoList.size();
+                            long now = sqlInFlight.addAndGet(size);
+                            updateMax(sqlInFlightMax, now);
                         }
 
                         @Override
@@ -91,6 +101,8 @@ public class SlowQueryTestConfig {
                                     sqlRatingAggElapsedMs.addAndGet(elapsedMs);
                                 }
                             }
+                            long size = queryInfoList == null ? 0L : queryInfoList.size();
+                            sqlInFlight.addAndGet(-size);
                         }
                     };
                     return ProxyDataSourceBuilder.create(dataSource)
@@ -124,5 +136,15 @@ public class SlowQueryTestConfig {
 
     private boolean isProxyDataSource(DataSource dataSource) {
         return dataSource.getClass().getName().contains("ProxyDataSource");
+    }
+
+    private static void updateMax(AtomicLong max, long value) {
+        long prev;
+        do {
+            prev = max.get();
+            if (value <= prev) {
+                return;
+            }
+        } while (!max.compareAndSet(prev, value));
     }
 }

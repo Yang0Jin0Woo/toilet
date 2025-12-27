@@ -65,8 +65,11 @@ class RatingCacheEvictComparisonTest {
         long aggCountTotal = 0;
         double avgSum = 0.0;
         long reviewCountSum = 0;
+        int currentRating = 2;
         for (int i = 1; i <= RUNS; i++) {
-            reviewService.update(r1.getId(), 5, "updated-" + i);
+            int newRating = nextRating(i);
+            reviewService.update(r1.getId(), newRating, "updated-" + i);
+            currentRating = newRating;
 
             SlowQueryTestConfig.resetSqlCounters();
             ToiletView view = findView(toilet.getId());
@@ -81,11 +84,8 @@ class RatingCacheEvictComparisonTest {
                 misses++;
             }
             assertTrue(ratingAggCount > 0, "evict should trigger re-aggregation on next read");
-            assertEquals(4.5, view.avgRating(), 0.0001);
+            assertEquals(expectedAvg(currentRating), view.avgRating(), 0.0001);
             assertEquals(2L, view.reviewCount());
-
-            // Reset rating to keep expected averages consistent across runs.
-            reviewService.update(r1.getId(), 2, "reset-" + i);
         }
         logSummary("EVICT", hits, misses, aggCountTotal, avgSum, reviewCountSum);
     }
@@ -93,8 +93,8 @@ class RatingCacheEvictComparisonTest {
     @Test
     void deltaStrategyAvoidsReaggregationAfterUpdate() {
         Toilet toilet = seedToilet();
-        Review r1 = seedReview(toilet, 1, "old");
-        seedReview(toilet, 3, "keep");
+        Review r1 = seedReview(toilet, 2, "old");
+        seedReview(toilet, 4, "keep");
 
         warmRatingsCache();
 
@@ -103,16 +103,18 @@ class RatingCacheEvictComparisonTest {
         long aggCountTotal = 0;
         double avgSum = 0.0;
         long reviewCountSum = 0;
+        int currentRating = 2;
         for (int i = 1; i <= RUNS; i++) {
             Review target = reviewRepository.findById(r1.getId())
                     .orElseThrow(() -> new IllegalStateException("review not found"));
             int oldRating = target.getRating();
-            int newRating = (oldRating == 5 ? 1 : 5);
+            int newRating = nextRating(i);
             target.setRating(newRating);
             reviewRepository.save(target);
 
             // Simulate pre-evict behavior by applying cache delta directly.
             toiletService.applyReviewUpdate(toilet.getId(), oldRating, newRating);
+            currentRating = newRating;
 
             SlowQueryTestConfig.resetSqlCounters();
             ToiletView view = findView(toilet.getId());
@@ -127,11 +129,49 @@ class RatingCacheEvictComparisonTest {
                 misses++;
             }
             assertEquals(0L, ratingAggCount, "delta update should keep cache hot");
-            double expectedAvg = newRating == 5 ? 4.0 : 2.0;
-            assertEquals(expectedAvg, view.avgRating(), 0.0001);
+            assertEquals(expectedAvg(currentRating), view.avgRating(), 0.0001);
             assertEquals(2L, view.reviewCount());
         }
         logSummary("DELTA", hits, misses, aggCountTotal, avgSum, reviewCountSum);
+    }
+
+    @Test
+    void deltaStrategyCanBeOverwrittenByStaleRefresh() {
+        Toilet toilet = seedToilet();
+        Review r1 = seedReview(toilet, 2, "old");
+        seedReview(toilet, 4, "keep");
+
+        warmRatingsCache();
+
+        ReviewRepository.SingleRatingAgg stale = reviewRepository.aggregateByToiletId(toilet.getId());
+        double staleAvg = stale.getAvg() == null ? 0.0 : stale.getAvg();
+        long staleCnt = stale.getCnt() == null ? 0L : stale.getCnt();
+
+        Review target = reviewRepository.findById(r1.getId())
+                .orElseThrow(() -> new IllegalStateException("review not found"));
+        int oldRating = target.getRating();
+        int newRating = 5;
+        target.setRating(newRating);
+        reviewRepository.save(target);
+
+        // Simulate pre-evict behavior by applying cache delta directly.
+        toiletService.applyReviewUpdate(toilet.getId(), oldRating, newRating);
+
+        // Simulate a stale refresh overwriting the newer cache value.
+        long now = System.currentTimeMillis();
+        getRatingCache().put(
+                toilet.getId(),
+                new ToiletService.RatingAgg(staleAvg * staleCnt, staleCnt, now)
+        );
+
+        ToiletView view = findView(toilet.getId());
+        double expectedNewAvg = expectedAvg(newRating);
+        System.out.println(String.format(
+                "CACHE_RACE_EVIDENCE staleAvg=%.2f expectedNewAvg=%.2f actualAvg=%.2f",
+                staleAvg, expectedNewAvg, view.avgRating()
+        ));
+        assertEquals(staleAvg, view.avgRating(), 0.0001);
+        assertTrue(Math.abs(view.avgRating() - expectedNewAvg) > 0.1);
     }
 
     private ToiletView findView(Long toiletId) {
@@ -163,6 +203,15 @@ class RatingCacheEvictComparisonTest {
         ReflectionTestUtils.setField(toiletService, "listCacheUpdatedMs", 0L);
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<Long, ToiletService.RatingAgg> getRatingCache() {
+        Object ratingCache = ReflectionTestUtils.getField(toiletService, "ratingCache");
+        if (ratingCache instanceof Map<?, ?> map) {
+            return (Map<Long, ToiletService.RatingAgg>) map;
+        }
+        throw new IllegalStateException("rating cache not found");
+    }
+
     private Toilet seedToilet() {
         Toilet t = new Toilet();
         t.setContsName("Test Toilet");
@@ -182,6 +231,15 @@ class RatingCacheEvictComparisonTest {
         r.setRating(rating);
         r.setComment(comment);
         return reviewRepository.save(r);
+    }
+
+    private int nextRating(int run) {
+        int[] values = {5, 3, 1, 4, 2};
+        return values[(run - 1) % values.length];
+    }
+
+    private double expectedAvg(int currentRating) {
+        return (currentRating + 4) / 2.0;
     }
 
     private void logSummary(String label,

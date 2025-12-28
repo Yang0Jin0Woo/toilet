@@ -100,10 +100,6 @@ public class ToiletService {
                 log.warn("list.cache.ttl-ms too small; adjusted to {}ms (current {}ms)", listCacheTtlMs, MIN_LIST_TTL_MS);
                 listCacheTtlMs = MIN_LIST_TTL_MS;
             }
-            if (toiletRepository.count() > 0) {
-                return;
-            }
-
             ObjectMapper objectMapper = new ObjectMapper();
             InputStream inputStream =
                     new ClassPathResource(toiletDataPath.substring("classpath:".length())).getInputStream();
@@ -112,6 +108,10 @@ public class ToiletService {
 
             List<Map<String, Object>> data =
                     objectMapper.convertValue(dataNode, new TypeReference<List<Map<String, Object>>>() {});
+            long existingCount = toiletRepository.count();
+            if (existingCount >= data.size()) {
+                return;
+            }
 
             for (Map<String, Object> item : data) {
                 try {

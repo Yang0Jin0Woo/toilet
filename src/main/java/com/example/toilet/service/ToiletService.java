@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Service
@@ -51,7 +52,16 @@ public class ToiletService {
     private volatile List<ToiletSnapshot> listCache;
     private volatile long listCacheUpdatedMs;
 
+    // 전역락과 스트라이프락을 동시 잡지 않기
     private final Object ratingCacheLock = new Object();
+    private static final int RATING_LOCK_STRIPES = 64;
+    private final ReentrantLock[] ratingCacheLocks = new ReentrantLock[RATING_LOCK_STRIPES];
+
+    {
+        for (int i = 0; i < ratingCacheLocks.length; i++) {
+            ratingCacheLocks[i] = new ReentrantLock();
+        }
+    }
 
     private static final ThreadLocal<Long> LAST_AGG_MS = new ThreadLocal<>();
 
@@ -400,17 +410,32 @@ public class ToiletService {
                 var a = reviewRepository.aggregateByToiletId(id);
                 double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
                 long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
-                ratingCache.put(id, new RatingAgg(avg * cnt, cnt, nowMs));
+                ratingCache.compute(id, (key, existing) -> {
+                    if (existing != null && existing.lastUpdatedMs() >= nowMs) {
+                        return existing;
+                    }
+                    return new RatingAgg(avg * cnt, cnt, nowMs);
+                });
             }
         } else {
             var aggs = reviewRepository.aggregateByToiletIds(targets);
             for (var a : aggs) {
                 double avg = a.getAvg() != null ? a.getAvg() : 0.0;
                 long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-                ratingCache.put(a.getToiletId(), new RatingAgg(avg * cnt, cnt, nowMs));
+                ratingCache.compute(a.getToiletId(), (key, existing) -> {
+                    if (existing != null && existing.lastUpdatedMs() >= nowMs) {
+                        return existing;
+                    }
+                    return new RatingAgg(avg * cnt, cnt, nowMs);
+                });
             }
         }
-        targets.forEach(id -> ratingCache.putIfAbsent(id, new RatingAgg(0.0, 0, nowMs)));
+        targets.forEach(id -> ratingCache.compute(id, (key, existing) -> {
+            if (existing != null && existing.lastUpdatedMs() >= nowMs) {
+                return existing;
+            }
+            return existing != null ? existing : new RatingAgg(0.0, 0, nowMs);
+        }));
     }
 
     /**
@@ -426,14 +451,20 @@ public class ToiletService {
     public void applyReviewDelta(Long toiletId, int ratingDelta, long countDelta) {
         if (toiletId == null) return;
         long now = System.currentTimeMillis();
-        ratingCache.compute(toiletId, (id, agg) -> {
-            double baseSum = agg == null ? 0.0 : agg.sum();
-            long baseCnt = agg == null ? 0 : agg.count();
-            long newCnt = Math.max(0, baseCnt + countDelta);
-            double newSum = Math.max(0.0, baseSum + ratingDelta);
+        int[] stripes = stripeIndexesForTargets(List.of(toiletId));
+        lockStripes(stripes);
+        try {
+            ratingCache.compute(toiletId, (id, agg) -> {
+                double baseSum = agg == null ? 0.0 : agg.sum();
+                long baseCnt = agg == null ? 0 : agg.count();
+                long newCnt = Math.max(0, baseCnt + countDelta);
+                double newSum = Math.max(0.0, baseSum + ratingDelta);
             if (newCnt == 0) newSum = 0.0;
             return new RatingAgg(newSum, newCnt, now);
         });
+        } finally {
+            unlockStripes(stripes);
+        }
     }
 
     /**
@@ -452,7 +483,13 @@ public class ToiletService {
      */
     public void evictRating(Long toiletId) {
         if (toiletId != null) {
-            ratingCache.remove(toiletId);
+            int[] stripes = stripeIndexesForTargets(List.of(toiletId));
+            lockStripes(stripes);
+            try {
+                ratingCache.remove(toiletId);
+            } finally {
+                unlockStripes(stripes);
+            }
         }
     }
 
@@ -464,14 +501,30 @@ public class ToiletService {
         if (toiletId == null) return;
         long now = System.currentTimeMillis();
         var aggs = reviewRepository.aggregateByToiletIds(List.of(toiletId));
-        if (aggs.isEmpty()) {
-            ratingCache.put(toiletId, new RatingAgg(0.0, 0, now));
-            return;
+        int[] stripes = stripeIndexesForTargets(List.of(toiletId));
+        lockStripes(stripes);
+        try {
+            if (aggs.isEmpty()) {
+                ratingCache.compute(toiletId, (key, existing) -> {
+                    if (existing != null && existing.lastUpdatedMs() > now) {
+                        return existing;
+                    }
+                    return new RatingAgg(0.0, 0, now);
+                });
+                return;
+            }
+            var a = aggs.get(0);
+            double avg = a.getAvg() != null ? a.getAvg() : 0.0;
+            long cnt = a.getCnt() != null ? a.getCnt() : 0L;
+            ratingCache.compute(toiletId, (key, existing) -> {
+                if (existing != null && existing.lastUpdatedMs() > now) {
+                    return existing;
+                }
+                return new RatingAgg(avg * cnt, cnt, now);
+            });
+        } finally {
+            unlockStripes(stripes);
         }
-        var a = aggs.get(0);
-        double avg = a.getAvg() != null ? a.getAvg() : 0.0;
-        long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-        ratingCache.put(toiletId, new RatingAgg(avg * cnt, cnt, now));
     }
 
     public Long consumeLastAggMs() {
@@ -485,6 +538,43 @@ public class ToiletService {
     }
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }
+
+    private int stripeIndex(Long id) {
+        if (id == null) return 0;
+        return (int) Math.floorMod(id, (long) RATING_LOCK_STRIPES);
+    }
+
+    private int[] stripeIndexesForTargets(List<Long> targets) {
+        boolean[] used = new boolean[RATING_LOCK_STRIPES];
+        int count = 0;
+        for (Long id : targets) {
+            int idx = stripeIndex(id);
+            if (!used[idx]) {
+                used[idx] = true;
+                count++;
+            }
+        }
+        int[] indexes = new int[count];
+        int pos = 0;
+        for (int i = 0; i < used.length; i++) {
+            if (used[i]) {
+                indexes[pos++] = i;
+            }
+        }
+        return indexes;
+    }
+
+    private void lockStripes(int[] stripes) {
+        for (int idx : stripes) {
+            ratingCacheLocks[idx].lock();
+        }
+    }
+
+    private void unlockStripes(int[] stripes) {
+        for (int i = stripes.length - 1; i >= 0; i--) {
+            ratingCacheLocks[stripes[i]].unlock();
+        }
+    }
 
     private record AggResult(List<ToiletView> views, long aggMs) {}
     private record AggSnapshot(double avg, long cnt) {}

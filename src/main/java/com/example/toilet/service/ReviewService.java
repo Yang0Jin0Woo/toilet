@@ -70,7 +70,8 @@ public class ReviewService {
 
         int next = (review.getReportCount() == null ? 0 : review.getReportCount()) + 1;
         if (next >= blockThreshold) {
-            // 임계치 초과 시 리뷰를 삭제하고 캐시를 O(1)로 갱신
+            // 임계치 초과 시 리뷰 삭제 → 캐시 evict 후 다음 조회 때 재집계
+            // 트래픽 증가 시 ToiletService.applyReviewDelta() 기반 O(1) 갱신으로 전환 가능
             toiletService.evictRating(review.getToilet().getId());
             reviewRepository.delete(review);
             return true; // deleted

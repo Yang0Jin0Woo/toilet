@@ -4,22 +4,26 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 class RatingCacheLockRecheckLastUpdatedComparisonTest {
     private static final int RUNS = 10;
-    private static final int THREADS = 8;
-    private static final int PAIRS_PER_RUN = 300;
+    private static final int GUARD_THREADS = 8;
+    private static final int GUARD_PAIRS_PER_RUN = 300;
+    private static final int STRIPED_THREADS = 48;
+    private static final int STRIPED_PAIRS_PER_RUN = 5_000;
 
     @Test
     void compareLastUpdatedGuardWithConcurrentOutOfOrderUpdates() throws Exception {
@@ -27,25 +31,76 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
         ScenarioResult after = runScenario("EVICT_LOCK_RECHECK_LAST_UPDATED_ON", true);
 
         log.info("LAST_UPDATED_GUARD_RECHECK_SUMMARY runs={} pairsPerRun={} beforeRegressionsTotal={} afterRegressionsTotal={}",
-                RUNS, PAIRS_PER_RUN, before.totalRegressions, after.totalRegressions);
+                RUNS, GUARD_PAIRS_PER_RUN, before.totalRegressions, after.totalRegressions);
+
+        ScenarioResult stripedBefore = runScenarioWithLock("LAST_UPDATED_ON_SINGLE_LOCK", new SingleLockStrategy());
+        ScenarioResult stripedAfter = runScenarioWithLock("LAST_UPDATED_ON_STRIPED_LOCK", new StripedLockStrategy(256));
+
+        log.info("LOCK_THROUGHPUT_STATS label={} opsPerSec={} | min~p95ms(avgms)={}~{}({}) | p99={}",
+                stripedBefore.label,
+                stripedBefore.avgOpsPerSec,
+                stripedBefore.stats.min,
+                stripedBefore.stats.p95,
+                stripedBefore.stats.avg,
+                stripedBefore.stats.p99);
+        log.info("LOCK_THROUGHPUT_STATS label={} opsPerSec={} | min~p95ms(avgms)={}~{}({}) | p99={}",
+                stripedAfter.label,
+                stripedAfter.avgOpsPerSec,
+                stripedAfter.stats.min,
+                stripedAfter.stats.p95,
+                stripedAfter.stats.avg,
+                stripedAfter.stats.p99);
+
+        log.info("LOCK_WAIT_STATS label={} waitMs avg~p95={}~{} | p99={} | contendedPct={}",
+                stripedBefore.label,
+                formatMs(stripedBefore.waitStats.avg),
+                formatMs(stripedBefore.waitStats.p95),
+                formatMs(stripedBefore.waitStats.p99),
+                formatPct(stripedBefore.waitStats.contendedPct));
+        log.info("LOCK_WAIT_STATS label={} waitMs avg~p95={}~{} | p99={} | contendedPct={}",
+                stripedAfter.label,
+                formatMs(stripedAfter.waitStats.avg),
+                formatMs(stripedAfter.waitStats.p95),
+                formatMs(stripedAfter.waitStats.p99),
+                formatPct(stripedAfter.waitStats.contendedPct));
+
+        log.info("STRIPED_LOCK_COMPARE_SUMMARY runs={} pairsPerRun={} beforeRegressionsTotal={} afterRegressionsTotal={}",
+                RUNS, STRIPED_PAIRS_PER_RUN, stripedBefore.totalRegressions, stripedAfter.totalRegressions);
     }
 
     private ScenarioResult runScenario(String label, boolean lastUpdatedGuard) throws Exception {
+        return runScenarioInternal(label, new SingleLockStrategy(), lastUpdatedGuard, GUARD_THREADS, GUARD_PAIRS_PER_RUN);
+    }
+
+    private ScenarioResult runScenarioWithLock(String label, LockStrategy lockStrategy) throws Exception {
+        return runScenarioInternal(label, lockStrategy, true, STRIPED_THREADS, STRIPED_PAIRS_PER_RUN);
+    }
+
+    private ScenarioResult runScenarioInternal(String label,
+                                               LockStrategy lockStrategy,
+                                               boolean lastUpdatedGuard,
+                                               int threads,
+                                               int pairsPerRun) throws Exception {
         long[] elapsedMs = new long[RUNS];
         long[] regressions = new long[RUNS];
+        long[] opsPerSec = new long[RUNS];
+        long totalOpsPerRun = (long) pairsPerRun * 2;
+        WaitStats[] waitStats = new WaitStats[RUNS];
 
         for (int run = 0; run < RUNS; run++) {
-            CacheEngine cache = new CacheEngine(lastUpdatedGuard, true);
+            CacheEngine cache = new CacheEngine(lockStrategy, lastUpdatedGuard, true);
             cache.evictAll();
 
-            ExecutorService pool = Executors.newFixedThreadPool(THREADS);
+            ExecutorService pool = Executors.newFixedThreadPool(threads);
             CountDownLatch start = new CountDownLatch(1);
-            CountDownLatch done = new CountDownLatch(PAIRS_PER_RUN * 2);
+            CountDownLatch done = new CountDownLatch(pairsPerRun * 2);
             LongAdder regressionCounter = new LongAdder();
+            long[] waitNs = new long[(int) totalOpsPerRun];
+            AtomicInteger waitIdx = new AtomicInteger();
             long startNs = System.nanoTime();
 
             try {
-                for (int i = 0; i < PAIRS_PER_RUN; i++) {
+                for (int i = 0; i < pairsPerRun; i++) {
                     long id = i;
                     long baseTs = System.currentTimeMillis();
                     long newerTs = baseTs + 2;
@@ -54,7 +109,7 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
                     pool.submit(() -> {
                         await(start);
                         sleepJitter(0, 1);
-                        if (cache.update(id, newerTs, regressionCounter)) {
+                        if (cache.update(id, newerTs, regressionCounter, waitNs, waitIdx)) {
                             regressionCounter.increment();
                         }
                         done.countDown();
@@ -63,7 +118,7 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
                     pool.submit(() -> {
                         await(start);
                         sleepJitter(1, 3);
-                        if (cache.update(id, olderTs, regressionCounter)) {
+                        if (cache.update(id, olderTs, regressionCounter, waitNs, waitIdx)) {
                             regressionCounter.increment();
                         }
                         done.countDown();
@@ -78,17 +133,21 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
             }
 
             elapsedMs[run] = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+            opsPerSec[run] = elapsedMs[run] == 0 ? totalOpsPerRun : totalOpsPerRun * 1000 / elapsedMs[run];
             regressions[run] = regressionCounter.sum();
+            waitStats[run] = waitStats(waitNs, waitIdx.get());
         }
 
         Stats stats = stats(elapsedMs);
         long totalRegressions = sum(regressions);
         long avgRegressions = RUNS == 0 ? 0 : totalRegressions / RUNS;
+        long avgOpsPerSec = avg(opsPerSec);
+        WaitStats avgWaitStats = avgWaitStats(waitStats);
 
         log.info("LAST_UPDATED_GUARD_RECHECK_STATS label={} runs={} pairsPerRun={} regressionsTotal={} regressionsAvgPerRun={} elapsedMs min~p95(avgMs)={}~{}({}) | p99={}",
                 label,
                 RUNS,
-                PAIRS_PER_RUN,
+                pairsPerRun,
                 totalRegressions,
                 avgRegressions,
                 stats.min,
@@ -96,7 +155,7 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
                 stats.avg,
                 stats.p99);
 
-        return new ScenarioResult(totalRegressions);
+        return new ScenarioResult(label, totalRegressions, stats, avgOpsPerSec, avgWaitStats);
     }
 
     private void sleepJitter(int minMs, int maxMs) {
@@ -155,25 +214,40 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
         return total;
     }
 
-    private record ScenarioResult(long totalRegressions) {
+    private record ScenarioResult(String label, long totalRegressions, Stats stats, long avgOpsPerSec, WaitStats waitStats) {
     }
 
     private record Stats(long avg, long min, long p95, long p99) {
     }
 
+    private record WaitStats(double avg, double p95, double p99, double contendedPct) {
+    }
+
     private static final class CacheEngine {
-        private final Map<Long, RatingAgg> map = new HashMap<>();
-        private final ReentrantLock lock = new ReentrantLock();
+        private final Map<Long, RatingAgg> map = new ConcurrentHashMap<>();
+        private final LockStrategy lockStrategy;
         private final boolean lastUpdatedGuard;
         private final boolean lockRecheck;
 
-        private CacheEngine(boolean lastUpdatedGuard, boolean lockRecheck) {
+        private CacheEngine(LockStrategy lockStrategy, boolean lastUpdatedGuard, boolean lockRecheck) {
+            this.lockStrategy = lockStrategy;
             this.lastUpdatedGuard = lastUpdatedGuard;
             this.lockRecheck = lockRecheck;
         }
 
-        boolean update(long id, long nowMs, LongAdder regressionCounter) {
+        boolean update(long id,
+                       long nowMs,
+                       LongAdder regressionCounter,
+                       long[] waitNs,
+                       AtomicInteger waitIdx) {
+            ReentrantLock lock = lockStrategy.lockFor(id);
+            long waitStart = System.nanoTime();
             lock.lock();
+            long waited = System.nanoTime() - waitStart;
+            int idx = waitIdx.getAndIncrement();
+            if (idx < waitNs.length) {
+                waitNs[idx] = waited;
+            }
             try {
                 RatingAgg existing = map.get(id);
                 if (lockRecheck) {
@@ -197,12 +271,87 @@ class RatingCacheLockRecheckLastUpdatedComparisonTest {
         }
 
         void evictAll() {
-            lock.lock();
-            try {
-                map.clear();
-            } finally {
-                lock.unlock();
+            map.clear();
+        }
+    }
+
+    private WaitStats waitStats(long[] values, int size) {
+        if (size <= 0) {
+            return new WaitStats(0.0, 0.0, 0.0, 0.0);
+        }
+        int clippedSize = Math.min(size, values.length);
+        long[] trimmed = new long[clippedSize];
+        System.arraycopy(values, 0, trimmed, 0, clippedSize);
+        Arrays.sort(trimmed);
+        long min = trimmed[0];
+        long p95 = percentile(trimmed, 0.95);
+        long p99 = percentile(trimmed, 0.99);
+        long avg = avg(trimmed);
+        long contended = 0L;
+        for (long v : trimmed) {
+            if (v > 0L) contended++;
+        }
+        double contendedPct = trimmed.length == 0 ? 0.0 : (contended * 100.0 / trimmed.length);
+        return new WaitStats(nanosToMs(avg), nanosToMs(p95), nanosToMs(p99), contendedPct);
+    }
+
+    private WaitStats avgWaitStats(WaitStats[] values) {
+        if (values.length == 0) {
+            return new WaitStats(0.0, 0.0, 0.0, 0.0);
+        }
+        double avg = 0.0;
+        double p95 = 0.0;
+        double p99 = 0.0;
+        double contendedPct = 0.0;
+        for (WaitStats v : values) {
+            avg += v.avg;
+            p95 += v.p95;
+            p99 += v.p99;
+            contendedPct += v.contendedPct;
+        }
+        double count = values.length;
+        return new WaitStats(avg / count, p95 / count, p99 / count, contendedPct / count);
+    }
+
+    private double nanosToMs(long nanos) {
+        return nanos / 1_000_000.0;
+    }
+
+    private String formatMs(double value) {
+        return String.format(java.util.Locale.US, "%.6f", value);
+    }
+
+    private String formatPct(double value) {
+        return String.format(java.util.Locale.US, "%.1f%%", value);
+    }
+
+    private interface LockStrategy {
+        ReentrantLock lockFor(long id);
+    }
+
+    private static final class SingleLockStrategy implements LockStrategy {
+        private final ReentrantLock lock = new ReentrantLock();
+
+        @Override
+        public ReentrantLock lockFor(long id) {
+            return lock;
+        }
+    }
+
+    private static final class StripedLockStrategy implements LockStrategy {
+        private final ReentrantLock[] locks;
+
+        private StripedLockStrategy(int stripes) {
+            this.locks = new ReentrantLock[stripes];
+            for (int i = 0; i < stripes; i++) {
+                locks[i] = new ReentrantLock();
             }
+        }
+
+        @Override
+        public ReentrantLock lockFor(long id) {
+            int idx = (int) Math.floorMod(id, (long) locks.length);
+            return locks[idx];
         }
     }
 

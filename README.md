@@ -297,13 +297,13 @@ src
 - `DtoProjectionComparisonTest`
   - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 성능 비교, 30회 실행
 - `RatingCacheEvictComparisonTest`
-  - 리뷰 변경 후 캐시 evict vs delta 업데이트 비교, 최신 값 역행(스테일 overwrite) 시나리오 재현
+  - 리뷰 변경 후 캐시 evict vs delta 업데이트 비교, 최신 값 역행 시나리오
 - `RatingCacheConcurrentEvictTest`
-  - 동시 요청에서 캐시 evict/락/락 내부 재검증 조합별 집계 쿼리 중복 실행 비교
+  - 동시 요청에서 캐시 evict/단일 락/락 내부 재검증 조합별 집계 쿼리 중복 실행 비교
 - `RatingCacheLockRecheckLastUpdatedComparisonTest`
   - 갱신 시각 기반 역행 방지와 단일 락 vs 스트라이프 락 처리량/경합 비교
 - `SlowQueryTestConfig`
-  - DataSource 프록시로 SQL 횟수/시간을 카운트하는 테스트용 설정
+  - DataSource 프록시로 SQL 횟수/시간을 카운트하는 테스트 설정
 
 
 ## 기술 스택

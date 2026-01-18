@@ -19,9 +19,6 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,21 +26,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ToiletService {
 
-    /**
-     * Cache entry: toiletId -> sum/count (+timestamp) for fast avg lookup.
-     */
-    public record RatingAgg(double sum, long count, long lastUpdatedMs) {
-        public double avg() { return count == 0 ? 0.0 : sum / count; }
-        public boolean isStale(long now, long ttlMs) {
-            return ttlMs > 0 && now - lastUpdatedMs >= ttlMs;
-        }
-    }
-
-    // Minimum cache TTL (ms)
-    private static final long MIN_TTL_MS = 1_000L;
     private static final long MIN_LIST_TTL_MS = 1_000L;
-
-    private final ConcurrentMap<Long, RatingAgg> ratingCache = new ConcurrentHashMap<>();
 
     private final ToiletRepository toiletRepository;
     private final ReviewRepository reviewRepository;
@@ -52,36 +35,13 @@ public class ToiletService {
     private volatile List<ToiletSnapshot> listCache;
     private volatile long listCacheUpdatedMs;
 
-    // 전역락과 스트라이프락을 동시 잡지 않기
-    private final Object ratingCacheLock = new Object();
-    private static final int RATING_LOCK_STRIPES = 64;
-    private final ReentrantLock[] ratingCacheLocks = new ReentrantLock[RATING_LOCK_STRIPES];
-
-    {
-        for (int i = 0; i < ratingCacheLocks.length; i++) {
-            ratingCacheLocks[i] = new ReentrantLock();
-        }
-    }
-
     private static final ThreadLocal<Long> LAST_AGG_MS = new ThreadLocal<>();
 
     @Value("${toilet.data.path}")
     private String toiletDataPath;
 
-    @Value("${rating.cache.ttl-ms:300000}")
-    private long ratingCacheTtlMs;
-
-    @Value("${rating.cache.enabled:true}")
-    private boolean ratingCacheEnabled;
-
     @Value("${rating.aggregation.mode:group}")
     private String ratingAggregationMode;
-
-    @Value("${rating.cache.lock.enabled:true}")
-    private boolean ratingCacheLockEnabled;
-
-    @Value("${rating.cache.lock-recheck.enabled:true}")
-    private boolean ratingCacheLockRecheckEnabled;
 
     @Value("${list.cache.ttl-ms:300000}")
     private long listCacheTtlMs;
@@ -92,10 +52,6 @@ public class ToiletService {
     @PostConstruct
     public void init() {
         try {
-            if (ratingCacheTtlMs > 0 && ratingCacheTtlMs < MIN_TTL_MS) {
-                log.warn("rating.cache.ttl-ms too small; adjusted to {}ms (current {}ms)", ratingCacheTtlMs, MIN_TTL_MS);
-                ratingCacheTtlMs = MIN_TTL_MS;
-            }
             if (listCacheTtlMs > 0 && listCacheTtlMs < MIN_LIST_TTL_MS) {
                 log.warn("list.cache.ttl-ms too small; adjusted to {}ms (current {}ms)", listCacheTtlMs, MIN_LIST_TTL_MS);
                 listCacheTtlMs = MIN_LIST_TTL_MS;
@@ -239,9 +195,6 @@ public class ToiletService {
                 : RatingAggMode.GROUP;
     }
 
-    /**
-     * Combine list cache snapshots with rating cache for withRatings=true.
-     */
     public List<ToiletView> findAllWithRatings() {
         long totalStart = System.nanoTime();
 
@@ -255,47 +208,16 @@ public class ToiletService {
 
         List<Long> ids = toilets.stream().map(ToiletSnapshot::id).toList();
 
-        long now = System.currentTimeMillis();
         RatingAggMode mode = resolveAggMode();
-
-        if (!ratingCacheEnabled) {
-            AggResult result = buildViewsWithoutRatingCache(toilets, ids, mode);
-            setLastAggMs(result.aggMs);
-            long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
-            log.info("Ratings computed (mode={}, cacheEnabled={}, toilets={}, aggMs={}, totalMs={})",
-                    mode, ratingCacheEnabled, ids.size(), result.aggMs, totalElapsedMs);
-            return result.views;
+        AggResult result;
+        synchronized (this) {
+            result = buildViewsWithoutRatingCache(toilets, ids, mode);
         }
-
-        long aggElapsedMs = refreshRatingsWithCache(ids, now, mode);
-        setLastAggMs(aggElapsedMs);
-
-        List<ToiletView> views = toilets.stream()
-                .map(t -> {
-                    RatingAgg agg = ratingCache.get(t.id());
-                    double avg = agg != null ? agg.avg() : 0.0;
-                    long cnt = agg != null ? agg.count() : 0L;
-                    return new ToiletView(
-                            t.id(),
-                            t.contsName(),
-                            t.addrNew(),
-                            t.addrOld(),
-                            t.coordX(),
-                            t.coordY(),
-                            t.value04(),
-                            t.value05(),
-                            avg,
-                            cnt
-                    );
-                })
-                .toList();
-
+        setLastAggMs(result.aggMs);
         long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
-        log.info("{} toilets rating aggregation finished (aggMs={}, totalMs={}, cacheSize={})",
-                ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
-        log.info("Ratings computed (mode={}, cacheEnabled={}, toilets={}, aggMs={}, totalMs={}, cacheSize={})",
-                mode, ratingCacheEnabled, ids.size(), aggElapsedMs, totalElapsedMs, ratingCache.size());
-        return views;
+        log.info("Ratings computed (mode={}, toilets={}, aggMs={}, totalMs={})",
+                mode, ids.size(), result.aggMs, totalElapsedMs);
+        return result.views;
     }
 
     public List<ToiletView> getAllToiletViews(boolean withRatings) {
@@ -365,168 +287,6 @@ public class ToiletService {
         return new AggResult(views, aggElapsedMs);
     }
 
-    private long refreshRatingsWithCache(List<Long> ids, long now, RatingAggMode mode) {
-        List<Long> missing = ids.stream()
-                .filter(id -> {
-                    RatingAgg agg = ratingCache.get(id);
-                    return agg == null || agg.isStale(now, ratingCacheTtlMs);
-                })
-                .toList();
-        if (missing.isEmpty()) {
-            return 0L;
-        }
-
-        long aggStart = System.nanoTime();
-        if (ratingCacheLockEnabled) {
-            synchronized (ratingCacheLock) {
-                long now2 = System.currentTimeMillis();
-                List<Long> targets = missing;
-                if (ratingCacheLockRecheckEnabled) {
-                    targets = missing.stream()
-                            .filter(id -> {
-                                RatingAgg agg = ratingCache.get(id);
-                                return agg == null || agg.isStale(now2, ratingCacheTtlMs);
-                            })
-                            .toList();
-                    if (targets.isEmpty()) {
-                        return 0L;
-                    }
-                }
-                refreshMissingRatings(targets, mode, now2);
-            }
-        } else {
-            long now2 = System.currentTimeMillis();
-            refreshMissingRatings(missing, mode, now2);
-        }
-        return (System.nanoTime() - aggStart) / 1_000_000;
-    }
-
-    private void refreshMissingRatings(List<Long> targets, RatingAggMode mode, long nowMs) {
-        if (targets.isEmpty()) {
-            return;
-        }
-        if (mode == RatingAggMode.PER_TOILET) {
-            for (Long id : targets) {
-                var a = reviewRepository.aggregateByToiletId(id);
-                double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
-                long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
-                ratingCache.compute(id, (key, existing) -> {
-                    if (existing != null && existing.lastUpdatedMs() >= nowMs) {
-                        return existing;
-                    }
-                    return new RatingAgg(avg * cnt, cnt, nowMs);
-                });
-            }
-        } else {
-            var aggs = reviewRepository.aggregateByToiletIds(targets);
-            for (var a : aggs) {
-                double avg = a.getAvg() != null ? a.getAvg() : 0.0;
-                long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-                ratingCache.compute(a.getToiletId(), (key, existing) -> {
-                    if (existing != null && existing.lastUpdatedMs() >= nowMs) {
-                        return existing;
-                    }
-                    return new RatingAgg(avg * cnt, cnt, nowMs);
-                });
-            }
-        }
-        targets.forEach(id -> ratingCache.compute(id, (key, existing) -> {
-            if (existing != null && existing.lastUpdatedMs() >= nowMs) {
-                return existing;
-            }
-            return existing != null ? existing : new RatingAgg(0.0, 0, nowMs);
-        }));
-    }
-
-    /**
-     * Update cache after a new review insert.
-     */
-    public void applyReviewDelta(Long toiletId, int ratingDelta) {
-        applyReviewDelta(toiletId, ratingDelta, 1);
-    }
-
-    /**
-     * Update cache with rating/count delta (countDelta may be negative for delete).
-     */
-    public void applyReviewDelta(Long toiletId, int ratingDelta, long countDelta) {
-        if (toiletId == null) return;
-        long now = System.currentTimeMillis();
-        int[] stripes = stripeIndexesForTargets(List.of(toiletId));
-        lockStripes(stripes);
-        try {
-            ratingCache.compute(toiletId, (id, agg) -> {
-                double baseSum = agg == null ? 0.0 : agg.sum();
-                long baseCnt = agg == null ? 0 : agg.count();
-                long newCnt = Math.max(0, baseCnt + countDelta);
-                double newSum = Math.max(0.0, baseSum + ratingDelta);
-            if (newCnt == 0) newSum = 0.0;
-            return new RatingAgg(newSum, newCnt, now);
-        });
-        } finally {
-            unlockStripes(stripes);
-        }
-    }
-
-    /**
-     * Update cache when a review rating is changed.
-     */
-    public void applyReviewUpdate(Long toiletId, int oldRating, int newRating) {
-        if (toiletId == null) return;
-        int delta = newRating - oldRating;
-        if (delta == 0) return;
-        applyReviewDelta(toiletId, delta, 0);
-    }
-
-    /**
-     * Evict a single toilet rating cache entry.
-     * The next request will reload it from DB.
-     */
-    public void evictRating(Long toiletId) {
-        if (toiletId != null) {
-            int[] stripes = stripeIndexesForTargets(List.of(toiletId));
-            lockStripes(stripes);
-            try {
-                ratingCache.remove(toiletId);
-            } finally {
-                unlockStripes(stripes);
-            }
-        }
-    }
-
-    /**
-     * Refresh a single toilet rating cache from DB.
-     * Used after review insert/update/delete.
-     */
-    public void refreshRatingFromDb(Long toiletId) {
-        if (toiletId == null) return;
-        long now = System.currentTimeMillis();
-        var aggs = reviewRepository.aggregateByToiletIds(List.of(toiletId));
-        int[] stripes = stripeIndexesForTargets(List.of(toiletId));
-        lockStripes(stripes);
-        try {
-            if (aggs.isEmpty()) {
-                ratingCache.compute(toiletId, (key, existing) -> {
-                    if (existing != null && existing.lastUpdatedMs() > now) {
-                        return existing;
-                    }
-                    return new RatingAgg(0.0, 0, now);
-                });
-                return;
-            }
-            var a = aggs.get(0);
-            double avg = a.getAvg() != null ? a.getAvg() : 0.0;
-            long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-            ratingCache.compute(toiletId, (key, existing) -> {
-                if (existing != null && existing.lastUpdatedMs() > now) {
-                    return existing;
-                }
-                return new RatingAgg(avg * cnt, cnt, now);
-            });
-        } finally {
-            unlockStripes(stripes);
-        }
-    }
-
     public Long consumeLastAggMs() {
         Long v = LAST_AGG_MS.get();
         LAST_AGG_MS.remove();
@@ -539,44 +299,6 @@ public class ToiletService {
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }
 
-    private int stripeIndex(Long id) {
-        if (id == null) return 0;
-        return (int) Math.floorMod(id, (long) RATING_LOCK_STRIPES);
-    }
-
-    private int[] stripeIndexesForTargets(List<Long> targets) {
-        boolean[] used = new boolean[RATING_LOCK_STRIPES];
-        int count = 0;
-        for (Long id : targets) {
-            int idx = stripeIndex(id);
-            if (!used[idx]) {
-                used[idx] = true;
-                count++;
-            }
-        }
-        int[] indexes = new int[count];
-        int pos = 0;
-        for (int i = 0; i < used.length; i++) {
-            if (used[i]) {
-                indexes[pos++] = i;
-            }
-        }
-        return indexes;
-    }
-
-    private void lockStripes(int[] stripes) {
-        for (int idx : stripes) {
-            ratingCacheLocks[idx].lock();
-        }
-    }
-
-    private void unlockStripes(int[] stripes) {
-        for (int i = stripes.length - 1; i >= 0; i--) {
-            ratingCacheLocks[stripes[i]].unlock();
-        }
-    }
-
     private record AggResult(List<ToiletView> views, long aggMs) {}
     private record AggSnapshot(double avg, long cnt) {}
 }
-

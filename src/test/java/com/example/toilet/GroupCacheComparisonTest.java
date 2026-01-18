@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Arrays;
-import java.util.Map;
 
 @SpringBootTest(properties = {
         "sql.log.enabled=false",
@@ -22,7 +21,6 @@ import java.util.Map;
 class GroupCacheComparisonTest {
     private static final int RUNS = 100;
     private static final long LIST_TTL_MS = 10_000L;
-    private static final long RATING_TTL_MS = 10_000L;
     private static final int LONG_SLEEP_RATE_PERCENT = 10;
     private static final long SHORT_SLEEP_MAX_MS = 200L;
     private static final long LONG_SLEEP_MIN_MS = 3_500L;
@@ -40,16 +38,12 @@ class GroupCacheComparisonTest {
         double[] noCacheAggMs = new double[RUNS];
         double[] noCacheTotalMs = new double[RUNS];
         long[] noCacheDbCounts = new long[RUNS];
-        long[] noCacheHits = new long[RUNS];
-        long[] noCacheMisses = new long[RUNS];
 
         long[] cacheListCounts = new long[RUNS];
         long[] cacheAggCounts = new long[RUNS];
         double[] cacheAggMs = new double[RUNS];
         double[] cacheTotalMs = new double[RUNS];
         long[] cacheDbCounts = new long[RUNS];
-        long[] cacheHits = new long[RUNS];
-        long[] cacheMisses = new long[RUNS];
 
         for (int i = 0; i < RUNS; i++) {
             Timing noCache = measureOnce(false, true);
@@ -58,8 +52,6 @@ class GroupCacheComparisonTest {
             noCacheAggMs[i] = noCache.aggMs;
             noCacheTotalMs[i] = noCache.totalMs;
             noCacheDbCounts[i] = noCache.dbCount;
-            noCacheHits[i] = noCache.hits;
-            noCacheMisses[i] = noCache.misses;
         }
 
         clearCaches();
@@ -72,15 +64,13 @@ class GroupCacheComparisonTest {
             cacheAggMs[i] = cached.aggMs;
             cacheTotalMs[i] = cached.totalMs;
             cacheDbCounts[i] = cached.dbCount;
-            cacheHits[i] = cached.hits;
-            cacheMisses[i] = cached.misses;
         }
 
-        log.info("GROUP_CACHE_CONFIG runs={} ttlMs(list/rating)={}/{} longSleepRate%={} shortSleepMaxMs={} longSleepMs={}~{} seed={}",
-                RUNS, LIST_TTL_MS, RATING_TTL_MS, LONG_SLEEP_RATE_PERCENT,
+        log.info("GROUP_CACHE_CONFIG runs={} ttlMs(list)={} longSleepRate%={} shortSleepMaxMs={} longSleepMs={}~{} seed={}",
+                RUNS, LIST_TTL_MS, LONG_SLEEP_RATE_PERCENT,
                 SHORT_SLEEP_MAX_MS, LONG_SLEEP_MIN_MS, LONG_SLEEP_MAX_MS, RNG_SEED);
-        logSummary("CACHE_OFF", noCacheListCounts, noCacheAggCounts, noCacheDbCounts, noCacheHits, noCacheMisses, noCacheAggMs, noCacheTotalMs);
-        logSummary("CACHE_ON", cacheListCounts, cacheAggCounts, cacheDbCounts, cacheHits, cacheMisses, cacheAggMs, cacheTotalMs);
+        logSummary("CACHE_OFF", noCacheListCounts, noCacheAggCounts, noCacheDbCounts, noCacheAggMs, noCacheTotalMs);
+        logSummary("CACHE_ON", cacheListCounts, cacheAggCounts, cacheDbCounts, cacheAggMs, cacheTotalMs);
     }
 
     private void warmCache() {
@@ -103,26 +93,17 @@ class GroupCacheComparisonTest {
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
         long dbCount = SlowQueryTestConfig.getSqlStatementCount();
-        long hits = countRatingHits(ratingAggCount);
-        long misses = countRatingMisses(ratingAggCount);
 
-        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, hits, misses);
+        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount);
     }
 
     private void configure(boolean cacheEnabled) {
-        ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", cacheEnabled);
         ReflectionTestUtils.setField(toiletService, "listCacheEnabled", cacheEnabled);
         ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", "group");
-        ReflectionTestUtils.setField(toiletService, "ratingCacheTtlMs", RATING_TTL_MS);
         ReflectionTestUtils.setField(toiletService, "listCacheTtlMs", LIST_TTL_MS);
     }
 
-    @SuppressWarnings("unchecked")
     private void clearCaches() {
-        Object ratingCache = ReflectionTestUtils.getField(toiletService, "ratingCache");
-        if (ratingCache instanceof Map<?, ?> map) {
-            ((Map<Long, ?>) map).clear();
-        }
         ReflectionTestUtils.setField(toiletService, "listCache", null);
         ReflectionTestUtils.setField(toiletService, "listCacheUpdatedMs", 0L);
     }
@@ -131,25 +112,19 @@ class GroupCacheComparisonTest {
                             long[] listCounts,
                             long[] ratingAggCounts,
                             long[] dbCounts,
-                            long[] hits,
-                            long[] misses,
                             double[] aggMsValues,
                             double[] totalMsValues) {
         long listPerReq = perRequestValue(listCounts);
         long aggPerReq = perRequestValue(ratingAggCounts);
         long dbPerReq = perRequestValue(dbCounts);
-        long hitTotal = sum(hits);
-        long missTotal = sum(misses);
         Stats aggMsStats = stats(aggMsValues);
         Stats totalMsStats = stats(totalMsValues);
 
-        log.info("GROUP_CACHE_COMPARE ({}, listCount|ratingAggCount|dbCount|hit|miss|aggMs avg|min~P95|totalMs avg|min~P95:{}|{}|{}|{}|{}|{}|{}~{}|{}|{}~{})",
+        log.info("GROUP_CACHE_COMPARE ({}, listCount|ratingAggCount|dbCount|aggMs avg|min~P95|totalMs avg|min~P95:{}|{}|{}|{}|{}~{}|{}|{}~{})",
                 label,
                 listPerReq,
                 aggPerReq,
                 dbPerReq,
-                hitTotal,
-                missTotal,
                 formatMsDec(aggMsStats.avg), formatMsDec(aggMsStats.min), formatMsDec(aggMsStats.p95),
                 formatMsDec(totalMsStats.avg), formatMsDec(totalMsStats.min), formatMsDec(totalMsStats.p95));
     }
@@ -186,14 +161,6 @@ class GroupCacheComparisonTest {
         return origin + (long) (RNG.nextDouble() * n);
     }
 
-    private long countRatingHits(long ratingAggCount) {
-        return ratingAggCount == 0 ? 1 : 0;
-    }
-
-    private long countRatingMisses(long ratingAggCount) {
-        return ratingAggCount == 0 ? 0 : 1;
-    }
-
     private Stats stats(double[] values) {
         if (values.length == 0) {
             return new Stats(0, 0, 0);
@@ -221,31 +188,19 @@ class GroupCacheComparisonTest {
         return values.length == 0 ? 0 : sum / values.length;
     }
 
-    private long sum(long[] values) {
-        long sum = 0;
-        for (long v : values) {
-            sum += v;
-        }
-        return sum;
-    }
-
     private static final class Timing {
         private final double totalMs;
         private final double aggMs;
         private final long listCount;
         private final long ratingAggCount;
         private final long dbCount;
-        private final long hits;
-        private final long misses;
 
-        private Timing(double totalMs, double aggMs, long listCount, long ratingAggCount, long dbCount, long hits, long misses) {
+        private Timing(double totalMs, double aggMs, long listCount, long ratingAggCount, long dbCount) {
             this.totalMs = totalMs;
             this.aggMs = aggMs;
             this.listCount = listCount;
             this.ratingAggCount = ratingAggCount;
             this.dbCount = dbCount;
-            this.hits = hits;
-            this.misses = misses;
         }
     }
 
@@ -259,13 +214,6 @@ class GroupCacheComparisonTest {
             this.min = min;
             this.p95 = p95;
         }
-    }
-
-    private String formatMs(double value) {
-        if (value < 0) {
-            return "-1";
-        }
-        return Long.toString(Math.round(value));
     }
 
     private String formatMsDec(double value) {

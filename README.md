@@ -109,9 +109,6 @@ src
          ├─ DtoProjectionComparisonTest.java
          ├─ GroupAggComparisonTest.java
          ├─ GroupCacheComparisonTest.java
-         ├─ RatingCacheConcurrentEvictTest.java
-         ├─ RatingCacheEvictComparisonTest.java
-         ├─ RatingCacheLockRecheckLastUpdatedComparisonTest.java
          ├─ SlowQueryTestConfig.java
          └─ ToiletApplicationTests.java
 ```
@@ -161,15 +158,20 @@ src
 |        GROUP BY 단일 집계        |     1     |    1     |     17 ~ 22 ms (평균 19 ms)     |     47 ~ 54 ms (평균 49 ms)     |
 
 
-- 동시성 제어
-  - 평점 집계 및 리뷰 저장/수정/삭제는 `synchronized`로 직렬화(단일 인스턴스 기준)
-  - 멀티 인스턴스 환경에서는 DB 락/Redis 분산 락으로 보완 필요
-  - 테스트 환경: 그룹 집계 고정, 리스트 캐시 ON/OFF 비교(RUNS=100, 랜덤 지연 포함)
+- 리스트 캐시
+  - 리스트 캐시 TTL 기본값은 10분(600000ms), `list.cache.ttl-ms`로 조정 가능
+  - 테스트 환경: 리스트 캐시 ON/OFF 비교(RUNS=100, 랜덤 지연 포함)
 
 |   구분   | 리스트 조회 횟수 | 집계 연산 횟수 | DB 호출 횟수 |            집계 연산 시간             | 전체 응답 시간  |
 |:------:|:---------:|:--------:|:--------:|:-------------------------------:|:-------------------------------:|
 | 캐시 미적용 |     1     |    1     |    2     |  18.00 ~ 32.00 ms ( 21.05 ms)   | 47.69 ~ 70.15 ms (평균 54.91 ms) |
 | 캐시 적용  |     0     |    1     |    1     | 17.00 ~ 22.00 ms (평균 19.94 ms) | 17.91 ~ 24.73 ms (평균 22.11 ms) |
+
+
+- 동시성 제어
+  - 평점 집계 및 리뷰 저장/수정/삭제는 `synchronized`로 직렬화(단일 인스턴스 기준)
+  - 멀티 인스턴스 환경에서는 DB 락/Redis 분산 락으로 보완 필요
+  - 테스트 환경: 단일 인스턴스 기준으로 동시 요청을 직렬화하여 측정
 
 
 - 인터페이스 기반 DTO 프로젝션
@@ -217,15 +219,9 @@ src
 - `GroupAggComparisonTest`
   - 리뷰 평균/개수 집계 방식 비교(그룹 X vs 그룹 O), 100회 실행, 캐시 X
 - `GroupCacheComparisonTest`
-  - 그룹 집계 + 캐시 적용 전/후 비교(legacy: 평점 캐시 제거 전), 100회 실행, TTL= 60초 & 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
+  - 그룹 집계 + 리스트 캐시 적용 전/후 비교, 100회 실행, TTL= 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
 - `DtoProjectionComparisonTest`
   - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 성능 비교, 30회 실행
-- `RatingCacheEvictComparisonTest`
-  - 리뷰 변경 후 캐시 evict vs delta 업데이트 비교(legacy: 평점 캐시 제거 전)
-- `RatingCacheConcurrentEvictTest`
-  - 동시 요청에서 캐시 evict/단일 락/락 내부 재검증 조합별 집계 쿼리 중복 실행 비교(legacy: 평점 캐시 제거 전)
-- `RatingCacheLockRecheckLastUpdatedComparisonTest`
-  - 갱신 시각 기반 역행 방지와 단일 락 vs 스트라이프 락 처리량/경합 비교(legacy: 평점 캐시 제거 전)
 - `SlowQueryTestConfig`
   - DataSource 프록시로 SQL 횟수/시간을 카운트하는 테스트 설정
 

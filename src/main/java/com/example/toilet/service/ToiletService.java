@@ -43,7 +43,7 @@ public class ToiletService {
     @Value("${rating.aggregation.mode:group}")
     private String ratingAggregationMode;
 
-    @Value("${list.cache.ttl-ms:300000}")
+    @Value("${list.cache.ttl-ms:600000}")
     private long listCacheTtlMs;
 
     @Value("${list.cache.enabled:true}")

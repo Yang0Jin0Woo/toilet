@@ -75,7 +75,6 @@ class GroupAggComparisonTest {
     }
 
     private void configure(String mode) {
-        ReflectionTestUtils.setField(toiletService, "ratingCacheEnabled", false);
         ReflectionTestUtils.setField(toiletService, "listCacheEnabled", false);
         ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", mode);
     }

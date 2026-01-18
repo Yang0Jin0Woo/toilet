@@ -225,6 +225,8 @@ src
   - 리뷰 평균/개수 집계 방식 비교(그룹 X vs 그룹 O), 100회 실행, 캐시 X
 - `GroupCacheComparisonTest`
   - 그룹 집계 + 리스트 캐시 적용 전/후 비교, 100회 실행, TTL= 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
+- `ReviewSynchronizedConcurrencyTest`
+  - 동시 업데이트에서 `synchronized` 적용 전/후 정합성 비교, 100회 실행
 - `DtoProjectionComparisonTest`
   - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 성능 비교, 30회 실행
 - `SlowQueryTestConfig`

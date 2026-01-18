@@ -31,13 +31,14 @@ class ReviewSynchronizedConcurrencyTest {
         BenchmarkResult before = runUpdateBenchmark(false);
         BenchmarkResult after = runUpdateBenchmark(true);
 
-        log.info("REVIEW_SYNC_COMPARE (UPDATE_BEFORE, runs={}, threads={}, delayMs={}, conflictRuns={}, consistencyFailures={})",
-                RUNS, THREADS, DELAY_MS, before.conflictRuns, before.consistencyFailures);
-        log.info("REVIEW_SYNC_COMPARE (UPDATE_AFTER, runs={}, threads={}, delayMs={}, conflictRuns={}, consistencyFailures={})",
-                RUNS, THREADS, DELAY_MS, after.conflictRuns, after.consistencyFailures);
+        log.info("REVIEW_SYNC_COMPARE (UPDATE_BEFORE, runs={}, threads={}, delayMs={}, conflictRuns={}, consistencyFailures={}, finalValueMismatches={})",
+                RUNS, THREADS, DELAY_MS, before.conflictRuns, before.consistencyFailures, before.finalValueMismatches);
+        log.info("REVIEW_SYNC_COMPARE (UPDATE_AFTER, runs={}, threads={}, delayMs={}, conflictRuns={}, consistencyFailures={}, finalValueMismatches={})",
+                RUNS, THREADS, DELAY_MS, after.conflictRuns, after.consistencyFailures, after.finalValueMismatches);
 
         assertEquals(0, after.conflictRuns, "synchronized update should prevent overlap");
         assertEquals(0, after.consistencyFailures, "synchronized update should keep increments consistent");
+        assertEquals(0, after.finalValueMismatches, "synchronized update should keep final value consistent");
     }
 
     private static void runConcurrent(int threads, Runnable task) throws Exception {
@@ -70,6 +71,7 @@ class ReviewSynchronizedConcurrencyTest {
     private BenchmarkResult runUpdateBenchmark(boolean synchronizedService) throws Exception {
         int conflictRuns = 0;
         int consistencyFailures = 0;
+        int finalValueMismatches = 0;
 
         for (int i = 0; i < RUNS; i++) {
             AtomicInteger ratingState = new AtomicInteger(0);
@@ -100,10 +102,11 @@ class ReviewSynchronizedConcurrencyTest {
             }
             if (ratingState.get() != THREADS) {
                 consistencyFailures++;
+                finalValueMismatches++;
             }
         }
 
-        return new BenchmarkResult(conflictRuns, consistencyFailures);
+        return new BenchmarkResult(conflictRuns, consistencyFailures, finalValueMismatches);
     }
 
     private interface UpdateRunner {
@@ -152,10 +155,12 @@ class ReviewSynchronizedConcurrencyTest {
     private static final class BenchmarkResult {
         private final int conflictRuns;
         private final int consistencyFailures;
+        private final int finalValueMismatches;
 
-        private BenchmarkResult(int conflictRuns, int consistencyFailures) {
+        private BenchmarkResult(int conflictRuns, int consistencyFailures, int finalValueMismatches) {
             this.conflictRuns = conflictRuns;
             this.consistencyFailures = consistencyFailures;
+            this.finalValueMismatches = finalValueMismatches;
         }
     }
 

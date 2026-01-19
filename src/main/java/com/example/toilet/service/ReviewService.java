@@ -25,7 +25,7 @@ public class ReviewService {
     }
 
     @Transactional
-    public Review save(Review r) {
+    public synchronized Review save(Review r) {
         Review saved = reviewRepository.save(r);
         return saved;
     }
@@ -42,25 +42,25 @@ public class ReviewService {
     }
 
     @Transactional
-    public void delete(Long reviewId) {
+    public synchronized void delete(Long reviewId) {
         reviewRepository.findById(reviewId).ifPresent(r -> {
             reviewRepository.delete(r);
         });
     }
 
     @Transactional
-    public boolean report(Long reviewId, int blockThreshold) {
+    public synchronized boolean report(Long reviewId, int blockThreshold) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
 
         int next = (review.getReportCount() == null ? 0 : review.getReportCount()) + 1;
         if (next >= blockThreshold) {
             reviewRepository.delete(review);
-            return true; // deleted
+            return true;
         } else {
             review.setReportCount(next);
             reviewRepository.save(review);
-            return false; // not deleted
+            return false;
         }
     }
 }

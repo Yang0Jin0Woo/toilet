@@ -209,10 +209,7 @@ public class ToiletService {
         List<Long> ids = toilets.stream().map(ToiletSnapshot::id).toList();
 
         RatingAggMode mode = resolveAggMode();
-        AggResult result;
-        synchronized (this) {
-            result = buildViewsWithoutRatingCache(toilets, ids, mode);
-        }
+        AggResult result = buildViewsWithoutRatingCache(toilets, ids, mode);
         setLastAggMs(result.aggMs);
         long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
         log.info("Ratings computed (mode={}, toilets={}, aggMs={}, totalMs={})",

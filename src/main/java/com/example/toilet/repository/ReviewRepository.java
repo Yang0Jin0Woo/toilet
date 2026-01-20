@@ -2,7 +2,9 @@ package com.example.toilet.repository;
 
 import com.example.toilet.domain.Review;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -42,4 +44,21 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
            where r.toilet.id = :toiletId and (r.blocked = false or r.blocked is null)
            """)
     SingleRatingAgg aggregateByToiletId(Long toiletId);
+
+    @Modifying
+    @Query("""
+           update Review r
+           set r.reportCount = coalesce(r.reportCount, 0) + 1
+           where r.id = :reviewId
+           """)
+    int incrementReportCount(@Param("reviewId") Long reviewId);
+
+    @Modifying
+    @Query("""
+           delete from Review r
+           where r.id = :reviewId
+             and coalesce(r.reportCount, 0) >= :threshold
+           """)
+    int deleteIfReportCountGte(@Param("reviewId") Long reviewId,
+                               @Param("threshold") int threshold);
 }

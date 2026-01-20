@@ -49,18 +49,12 @@ public class ReviewService {
     }
 
     @Transactional
-    public synchronized boolean report(Long reviewId, int blockThreshold) {
-        Review review = reviewRepository.findById(reviewId)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
-
-        int next = (review.getReportCount() == null ? 0 : review.getReportCount()) + 1;
-        if (next >= blockThreshold) {
-            reviewRepository.delete(review);
-            return true;
-        } else {
-            review.setReportCount(next);
-            reviewRepository.save(review);
-            return false;
+    public boolean report(Long reviewId, int blockThreshold) {
+        int updated = reviewRepository.incrementReportCount(reviewId);
+        if (updated == 0) {
+            throw new IllegalArgumentException("Invalid reviewId: " + reviewId);
         }
+        int deleted = reviewRepository.deleteIfReportCountGte(reviewId, blockThreshold);
+        return deleted > 0;
     }
 }

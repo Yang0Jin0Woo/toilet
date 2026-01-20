@@ -4,6 +4,8 @@ import com.example.toilet.domain.Review;
 import com.example.toilet.domain.Toilet;
 import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -27,7 +30,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Controller
@@ -68,7 +70,10 @@ public class ReviewController {
     private static final int SPAM_LIMIT = 3;
     private static final long SPAM_WINDOW_MS = 60_000L;
     private static final int REPORT_BLOCK_THRESHOLD = 10;
-    private final Map<String, Deque<Long>> rateLimitBuckets = new ConcurrentHashMap<>();
+    private final Cache<String, Deque<Long>> rateLimitBuckets = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofMinutes(20))
+            .maximumSize(200_000)
+            .build();
 
     private boolean hasBannedWord(String text) {
         if (text == null || text.isBlank()) return false;
@@ -90,7 +95,7 @@ public class ReviewController {
 
     private boolean isRateLimited(String key) {
         long now = System.currentTimeMillis();
-        Deque<Long> deque = rateLimitBuckets.computeIfAbsent(key, k -> new ArrayDeque<>());
+        Deque<Long> deque = rateLimitBuckets.get(key, k -> new ArrayDeque<>());
         synchronized (deque) {
             while (!deque.isEmpty() && now - deque.peekFirst() > SPAM_WINDOW_MS) {
                 deque.pollFirst();

@@ -148,7 +148,7 @@
                     <input type="hidden" name="toiletId" th:value="${toilet.id}">
                     <div>
                         <label for="rating" class="form-label">별점</label>
-                        <select name="rating" class="form-select form-select-sm">
+                        <select id="rating" name="rating" class="form-select form-select-sm">
                             <option th:value="5" th:selected="${rev.rating == 5}">5</option>
                             <option th:value="4" th:selected="${rev.rating == 4}">4</option>
                             <option th:value="3" th:selected="${rev.rating == 3}">3</option>

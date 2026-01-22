@@ -43,7 +43,8 @@ public class Review {
 
     @PrePersist
     public void prePersist() {
-        createdAt = LocalDateTime.now();
+        // Store as UTC to avoid server timezone drift.
+        createdAt = LocalDateTime.now(java.time.ZoneOffset.UTC);
         if (reportCount == null) reportCount = 0;
         if (blocked == null) blocked = false;
     }

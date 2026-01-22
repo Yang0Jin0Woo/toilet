@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -65,6 +67,7 @@ public class ReviewController {
     private final ToiletService toiletService;
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Seoul");
 
     private static final Set<String> BANNED_KEYWORDS = Set.of("욕설", "비속어", "광고", "불건전", "도배");
     private static final int SPAM_LIMIT = 3;
@@ -129,7 +132,11 @@ public class ReviewController {
                     m.put("id", r.getId());
                     m.put("rating", r.getRating());
                     m.put("comment", r.getComment());
-                    m.put("createdAt", r.getCreatedAt() != null ? r.getCreatedAt().format(FMT) : "");
+                    m.put("createdAt", r.getCreatedAt() != null
+                            ? r.getCreatedAt().atOffset(ZoneOffset.UTC)
+                                    .atZoneSameInstant(DISPLAY_ZONE)
+                                    .format(FMT)
+                            : "");
                     m.put("reportCount", r.getReportCount());
                     return m;
                 })

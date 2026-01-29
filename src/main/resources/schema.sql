@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS review (
     rating      INT    NOT NULL,
     comment     VARCHAR(1000),
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version     BIGINT NOT NULL DEFAULT 0,
 
     CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5),
     KEY idx_review_toilet (toilet_id),

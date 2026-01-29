@@ -33,6 +33,10 @@ public class Review {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private Boolean blocked = false;
 
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     private LocalDateTime createdAt;
 
     @PrePersist

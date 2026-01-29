@@ -3,7 +3,6 @@ package com.example.toilet.service;
 import com.example.toilet.domain.Toilet;
 import com.example.toilet.dto.ToiletSnapshot;
 import com.example.toilet.dto.ToiletView;
-import com.example.toilet.repository.ReviewRepository;
 import com.example.toilet.repository.ToiletRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,7 +18,6 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -29,7 +27,6 @@ public class ToiletService {
     private static final long MIN_LIST_TTL_MS = 1_000L;
 
     private final ToiletRepository toiletRepository;
-    private final ReviewRepository reviewRepository;
 
     private final Object listCacheLock = new Object();
     private volatile List<ToiletSnapshot> listCache;
@@ -182,91 +179,40 @@ public class ToiletService {
                         p.getCoordX(),
                         p.getCoordY(),
                         p.getValue04(),
-                        p.getValue05()
+                        p.getValue05(),
+                        p.getRatingSum(),
+                        p.getRatingCount()
                 ))
                 .toList();
-    }
-
-    private enum RatingAggMode { GROUP, PER_TOILET }
-
-    private RatingAggMode resolveAggMode() {
-        return "per_toilet".equalsIgnoreCase(ratingAggregationMode)
-                ? RatingAggMode.PER_TOILET
-                : RatingAggMode.GROUP;
-    }
-
-    public List<ToiletView> findAllWithRatings() {
-        long totalStart = System.nanoTime();
-
-        List<ToiletSnapshot> toilets = listCacheEnabled
-                ? getAllToiletSnapshotsCached()
-                : loadSnapshotsFromDb();
-        if (toilets.isEmpty()) {
-            setLastAggMs(0);
-            return List.of();
-        }
-
-        List<Long> ids = toilets.stream().map(ToiletSnapshot::id).toList();
-
-        RatingAggMode mode = resolveAggMode();
-        AggResult result = buildViewsWithoutRatingCache(toilets, ids, mode);
-        setLastAggMs(result.aggMs);
-        long totalElapsedMs = (System.nanoTime() - totalStart) / 1_000_000;
-        log.info("Ratings computed (mode={}, toilets={}, aggMs={}, totalMs={})",
-                mode, ids.size(), result.aggMs, totalElapsedMs);
-        return result.views;
     }
 
     public List<ToiletView> getAllToiletViews(boolean withRatings) {
-        if (withRatings) {
-            return findAllWithRatings();
-        }
         List<ToiletSnapshot> snapshots = listCacheEnabled
                 ? getAllToiletSnapshotsCached()
                 : loadSnapshotsFromDb();
-        return snapshots.stream()
-                .map(t -> new ToiletView(
-                        t.id(),
-                        t.contsName(),
-                        t.addrNew(),
-                        t.addrOld(),
-                        t.coordX(),
-                        t.coordY(),
-                        t.value04(),
-                        t.value05(),
-                        0.0,
-                        0L
-                ))
-                .toList();
-    }
-
-    private AggResult buildViewsWithoutRatingCache(List<ToiletSnapshot> toilets,
-                                                   List<Long> ids,
-                                                   RatingAggMode mode) {
-        long aggStart = System.nanoTime();
-        Map<Long, AggSnapshot> map;
-        if (mode == RatingAggMode.PER_TOILET) {
-            map = ids.stream()
-                    .collect(Collectors.toMap(id -> id, id -> {
-                        var a = reviewRepository.aggregateByToiletId(id);
-                        double avg = a != null && a.getAvg() != null ? a.getAvg() : 0.0;
-                        long cnt = a != null && a.getCnt() != null ? a.getCnt() : 0L;
-                        return new AggSnapshot(avg, cnt);
-                    }));
-        } else {
-            map = reviewRepository.aggregateByToiletIds(ids).stream()
-                    .collect(Collectors.toMap(ReviewRepository.ToiletRatingAgg::getToiletId, a -> {
-                        double avg = a.getAvg() != null ? a.getAvg() : 0.0;
-                        long cnt = a.getCnt() != null ? a.getCnt() : 0L;
-                        return new AggSnapshot(avg, cnt);
-                    }));
+        if (!withRatings) {
+            return snapshots.stream()
+                    .map(t -> new ToiletView(
+                            t.id(),
+                            t.contsName(),
+                            t.addrNew(),
+                            t.addrOld(),
+                            t.coordX(),
+                            t.coordY(),
+                            t.value04(),
+                            t.value05(),
+                            0.0,
+                            0L
+                    ))
+                    .toList();
         }
-        long aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
-        List<ToiletView> views = toilets.stream()
+
+        long aggStart = System.nanoTime();
+        List<ToiletView> views = snapshots.stream()
                 .map(t -> {
-                    var a = map.get(t.id());
-                    double avg = a != null ? a.avg : 0.0;
-                    long cnt = a != null ? a.cnt : 0L;
+                    long cnt = t.ratingCount() == null ? 0L : t.ratingCount();
+                    long sum = t.ratingSum() == null ? 0L : t.ratingSum();
+                    double avg = cnt <= 0 ? 0.0 : (double) sum / (double) cnt;
                     return new ToiletView(
                             t.id(),
                             t.contsName(),
@@ -281,7 +227,9 @@ public class ToiletService {
                     );
                 })
                 .toList();
-        return new AggResult(views, aggElapsedMs);
+        long aggElapsedMs = (System.nanoTime() - aggStart) / 1_000_000;
+        setLastAggMs(aggElapsedMs);
+        return views;
     }
 
     public Long consumeLastAggMs() {
@@ -296,6 +244,4 @@ public class ToiletService {
 
     public Optional<Toilet> findById(Long id) { return toiletRepository.findById(id); }
 
-    private record AggResult(List<ToiletView> views, long aggMs) {}
-    private record AggSnapshot(double avg, long cnt) {}
 }

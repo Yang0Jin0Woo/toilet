@@ -166,7 +166,9 @@ class DtoProjectionComparisonTest {
                         p.getCoordX(),
                         p.getCoordY(),
                         p.getValue04(),
-                        p.getValue05()
+                        p.getValue05(),
+                        p.getRatingSum(),
+                        p.getRatingCount()
                 ))
                 .toList();
         long totalMs = nanosToMs(System.nanoTime() - start);

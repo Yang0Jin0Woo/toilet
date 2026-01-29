@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS toilet (
     value04      VARCHAR(64),        -- 남/여/장애/기타
     value05      VARCHAR(64),
     external_id  VARCHAR(64) NOT NULL,  -- 업서트 자연키(자연키 해시/고유값 저장)
+    rating_sum   BIGINT NOT NULL DEFAULT 0,
+    rating_count BIGINT NOT NULL DEFAULT 0,
+    version      BIGINT NOT NULL DEFAULT 0,
 
     UNIQUE KEY ux_toilet_external_id (external_id),
     KEY idx_toilet_coord (coord_y, coord_x)

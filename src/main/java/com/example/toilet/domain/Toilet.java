@@ -24,6 +24,15 @@ public class Toilet {
     private String value04;
     private String value05;
 
+    @Column(nullable = false)
+    private Long ratingSum = 0L;
+
+    @Column(nullable = false)
+    private Long ratingCount = 0L;
+
+    @Version
+    private Long version;
+
     @Transient
     private Double avgRating;
     @Transient
@@ -50,5 +59,12 @@ public class Toilet {
 
         // 기본값
         return "unknown";
+    }
+
+    @Transient
+    public double getAvgRatingComputed() {
+        long cnt = ratingCount == null ? 0L : ratingCount;
+        long sum = ratingSum == null ? 0L : ratingSum;
+        return cnt <= 0 ? 0.0 : (double) sum / (double) cnt;
     }
 }

@@ -8,5 +8,7 @@ public record ToiletSnapshot(
         Double coordX,
         Double coordY,
         String value04,
-        String value05
+        String value05,
+        Long ratingSum,
+        Long ratingCount
 ) {}

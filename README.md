@@ -220,6 +220,14 @@ src
     - HTTP 기반이라 인프라/프록시 호환성이 높고 운영 비용이 낮음
     - WebSocket 대비 상태/프로토콜 관리 복잡도가 낮음
 
+  - SSE 적용 후 성능 이슈(문제 → 해결 → 결과)
+    - 문제: 리뷰 CRUD 시 간헐적으로 20~30초 Stalled 발생(브라우저 커넥션 풀 고갈)
+    - 해결: 트랜잭션 afterCommit 이후 비동기 발행, bounded queue + DiscardOldestPolicy, toiletId 단위 coalescing으로 backpressure 처리
+    - 결과: Stalled 재발 방지 및 리뷰 CRUD 응답 안정화(평균 수십 ms 수준)
+    - 문제: 페이지 전환/bfcache에서 SSE·Geolocation 잔존으로 리소스 누적
+    - 해결: 페이지당 SSE 1개만 유지, `pagehide/visibilitychange`에서 close/clearWatch 수행
+    - 결과: 백그라운드 잔존 작업 제거로 지연 재발 가능성 감소
+
 
 
 ## 한계/향후 개선

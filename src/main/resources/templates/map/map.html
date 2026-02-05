@@ -65,6 +65,10 @@
       let map;
       let userInteracted = false; // 지도 드래그/줌 이후에는 자동 재중심을 막기 위한 플래그
       let sse = null;
+      const SSE_URL = '/sse/ratings';
+      let renderSeq = 0;
+      const perf = window.performance;
+      let geoWatchId = null;
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -84,7 +88,7 @@
         map.setMaxLevel(6); // 줌 아웃 최댓값
 
         if (navigator.geolocation) {
-          navigator.geolocation.watchPosition(
+          geoWatchId = navigator.geolocation.watchPosition(
             pos => {
               userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
               if (!userInteracted) {
@@ -233,6 +237,8 @@
         };
 
         const renderMarkers = () => {
+          const seq = ++renderSeq;
+          const t0 = perf && perf.now ? perf.now() : Date.now();
           if (!Array.isArray(allToilets) || allToilets.length === 0) return;
           clearMarkers();
 
@@ -295,6 +301,8 @@
           });
 
           setStatus(`<span class="ok">공공 화장실</span> · ${selected.length}개 (zoom:${map.getLevel()})`);
+          const t1 = perf && perf.now ? perf.now() : Date.now();
+          console.log(`[renderMarkers#${seq}] total=${(t1 - t0).toFixed(1)}ms filtered=${filtered.length} selected=${selected.length} zoom=${map.getLevel()}`);
         };
 
         const debouncedRender = debounce(renderMarkers, 120);
@@ -325,7 +333,7 @@
 
         const connectSse = () => {
           if (sse) return;
-          sse = new EventSource('/sse/ratings');
+          sse = new EventSource(SSE_URL);
           sse.addEventListener('rating-updated', (e) => {
             try {
               const update = JSON.parse(e.data);
@@ -339,7 +347,32 @@
           };
         };
 
+        const closeSse = () => {
+          if (!sse) return;
+          sse.close();
+          sse = null;
+        };
+
+        const stopGeoWatch = () => {
+          if (geoWatchId != null) {
+            navigator.geolocation.clearWatch(geoWatchId);
+            geoWatchId = null;
+          }
+        };
+
+        window.addEventListener('pagehide', closeSse);
+        window.addEventListener('beforeunload', closeSse);
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) closeSse();
+        });
+        window.addEventListener('pagehide', stopGeoWatch);
+        window.addEventListener('beforeunload', stopGeoWatch);
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) stopGeoWatch();
+        });
+
         // 한 번 호출로 평점 포함 데이터 로드
+        const fetchStart = perf && perf.now ? perf.now() : Date.now();
         fetch(/*[[@{/toilets}]]*/ + '?withRatings=true')
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(full => {
@@ -351,6 +384,8 @@
             indexById = new Map();
             allToilets.forEach((t, i) => { if (t && t.id != null) indexById.set(t.id, i); });
             debouncedRender();
+            const fetchEnd = perf && perf.now ? perf.now() : Date.now();
+            console.log(`[fetch/toilets] items=${full.length} total=${(fetchEnd - fetchStart).toFixed(1)}ms`);
             setStatus(`<span class="ok">공공 화장실</span> · ${full.length}개 (평점 포함)`);
             connectSse();
           })

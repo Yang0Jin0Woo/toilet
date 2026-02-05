@@ -229,9 +229,24 @@
     const avgStarsEl = document.getElementById('avgStars');
     const reviewCountEl = document.getElementById('reviewCount');
     const liveNotice = document.getElementById('liveNotice');
+    const perf = window.performance;
 
-    if (toiletId) {
-        const sse = new EventSource('/sse/ratings?toiletId=' + toiletId);
+    window.addEventListener('load', () => {
+        const tNav = perf && perf.getEntriesByType ? perf.getEntriesByType('navigation')[0] : null;
+        const tableRows = document.querySelectorAll('table tbody tr').length;
+        if (tNav) {
+            console.log(`[reviews] navTotal=${tNav.duration.toFixed(1)}ms domContent=${tNav.domContentLoadedEventEnd.toFixed(1)}ms rows=${tableRows}`);
+        } else {
+            console.log(`[reviews] rows=${tableRows}`);
+        }
+    });
+
+    const SSE_URL = '/sse/ratings';
+    let sse = null;
+
+    const openRatingSse = () => {
+        if (sse) return;
+        sse = new EventSource(SSE_URL);
         sse.addEventListener('rating-updated', (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -251,6 +266,21 @@
         sse.onerror = () => {
             // 브라우저가 자동 재연결을 시도한다.
         };
+    };
+
+    const closeRatingSse = () => {
+        if (!sse) return;
+        sse.close();
+        sse = null;
+    };
+
+    if (toiletId) {
+        openRatingSse();
+        window.addEventListener('pagehide', closeRatingSse);
+        window.addEventListener('beforeunload', closeRatingSse);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) closeRatingSse();
+        });
     }
     /*]]>*/
 </script>

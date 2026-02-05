@@ -139,13 +139,13 @@ public class ReviewService {
     private void publishAfterCommit(Long toiletId) {
         if (toiletId == null) return;
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            ratingSseService.publishRatingUpdate(toiletId);
+            ratingSseService.publishRatingUpdateAsync(toiletId);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                ratingSseService.publishRatingUpdate(toiletId);
+                ratingSseService.publishRatingUpdateAsync(toiletId);
             }
         });
     }

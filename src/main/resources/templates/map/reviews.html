@@ -83,14 +83,20 @@
               th:attr="aria-label=|평점 ${#numbers.formatDecimal(avgRating,1,1)}|">
             <span class="iw-stars-outer">★ ★ ★ ★ ★</span>
             <span class="iw-stars-inner"
+                  id="avgStars"
                   th:style="'width:' + (${avgRating} * 20) + '%'">★ ★ ★ ★ ★</span>
         </span>
 
-        <span th:text="${#numbers.formatDecimal(avgRating,1,1)} + ' / 5'">0.0 / 5</span>
+        <span id="avgText" th:text="${#numbers.formatDecimal(avgRating,1,1)} + ' / 5'">0.0 / 5</span>
+        <span class="meta">(<span id="reviewCount" th:text="${#lists.size(reviews)}">0</span>)</span>
         &nbsp;<a th:href="@{/map}">지도 보기</a>
     </div>
 
     <br>
+
+    <div id="liveNotice" class="meta" style="display:none; color:#2e7d32;">
+        실시간 업데이트 반영됨 (리뷰 목록은 새로고침 시 갱신됩니다)
+    </div>
 
     <div style="text-align: right; width: 60%; margin: 0 auto;">
         <button type="button" id="openReviewBtn" onclick="openReviewForm()" class="btn btn-primary">리뷰 작성하기</button>
@@ -216,5 +222,37 @@
     </table>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js"></script>
+<script th:inline="javascript">
+    /*<![CDATA[*/
+    const toiletId = /*[[${toilet.id}]]*/ 0;
+    const avgTextEl = document.getElementById('avgText');
+    const avgStarsEl = document.getElementById('avgStars');
+    const reviewCountEl = document.getElementById('reviewCount');
+    const liveNotice = document.getElementById('liveNotice');
+
+    if (toiletId) {
+        const sse = new EventSource('/sse/ratings?toiletId=' + toiletId);
+        sse.addEventListener('rating-updated', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (!data || data.toiletId !== toiletId) return;
+                const avg = Number(data.avgRating || 0);
+                if (avgTextEl) avgTextEl.textContent = avg.toFixed(1) + ' / 5';
+                if (avgStarsEl) {
+                    const pct = Math.max(0, Math.min(100, avg * 20));
+                    avgStarsEl.style.width = pct + '%';
+                }
+                if (reviewCountEl) reviewCountEl.textContent = data.reviewCount ?? 0;
+                if (liveNotice) liveNotice.style.display = 'block';
+            } catch (err) {
+                console.warn('SSE parse error', err);
+            }
+        });
+        sse.onerror = () => {
+            // 브라우저가 자동 재연결을 시도한다.
+        };
+    }
+    /*]]>*/
+</script>
 </body>
 </html>

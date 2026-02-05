@@ -6,6 +6,8 @@ import com.example.toilet.repository.ToiletRepository;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 
@@ -17,6 +19,7 @@ public class ReviewService {
     private final ReviewRepository reviewRepository;
     private final ToiletRepository toiletRepository;
     private final ToiletService toiletService;
+    private final RatingSseService ratingSseService;
 
     public List<Review> findByToilet(Long toiletId) {
         return reviewRepository.findActiveByToiletIdOrderByIdDesc(toiletId);
@@ -47,6 +50,7 @@ public class ReviewService {
             throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
         }
         toiletService.evictListCache();
+        publishAfterCommit(toiletId);
         return saved;
     }
 
@@ -75,6 +79,7 @@ public class ReviewService {
             }
         }
         toiletService.evictListCache();
+        publishAfterCommit(toiletId);
         return saved;
     }
 
@@ -97,6 +102,7 @@ public class ReviewService {
             throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
         }
         toiletService.evictListCache();
+        publishAfterCommit(toiletId);
     }
 
     @Transactional
@@ -124,8 +130,23 @@ public class ReviewService {
                 throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
             }
             toiletService.evictListCache();
+            publishAfterCommit(toiletId);
             return true;
         }
         return false;
+    }
+
+    private void publishAfterCommit(Long toiletId) {
+        if (toiletId == null) return;
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            ratingSseService.publishRatingUpdate(toiletId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                ratingSseService.publishRatingUpdate(toiletId);
+            }
+        });
     }
 }

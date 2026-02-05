@@ -25,6 +25,11 @@ public interface ToiletRepository extends JpaRepository<Toilet, Long> {
         Long getRatingCount();
     }
 
+    interface RatingAggProjection {
+        Long getRatingSum();
+        Long getRatingCount();
+    }
+
     @Query("""
            select t.id as id,
                   t.contsName as contsName,
@@ -39,6 +44,14 @@ public interface ToiletRepository extends JpaRepository<Toilet, Long> {
            from Toilet t
            """)
     List<ToiletSnapshotProjection> findAllSnapshots();
+
+    @Query("""
+           select t.ratingSum as ratingSum,
+                  t.ratingCount as ratingCount
+           from Toilet t
+           where t.id = :toiletId
+           """)
+    Optional<RatingAggProjection> findRatingAggById(@Param("toiletId") Long toiletId);
 
     @Modifying
     @Query("""

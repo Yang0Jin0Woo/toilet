@@ -58,11 +58,13 @@
       const fallbackLat = 37.566826, fallbackLng = 126.9786567;
       let userPosition = { lat: fallbackLat, lng: fallbackLng };
       let allToilets = [];
+      let indexById = new Map();
       let markers = [];
       let openInfoWindow = null;
       let openMarker     = null;
       let map;
       let userInteracted = false; // 지도 드래그/줌 이후에는 자동 재중심을 막기 위한 플래그
+      let sse = null;
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -200,6 +202,36 @@
           }
         };
 
+        const buildInfoContent = (t) => {
+          const avgNum  = t.avgRating != null ? Number(t.avgRating) : 0;
+          const avgTxt  = avgNum.toFixed(1);
+          const cnt     = t.reviewCount != null ? t.reviewCount : 0;
+          const percent = Math.max(0, Math.min(100, (avgNum/5)*100)).toFixed(0);
+          return `
+              <div class="draggable-iw" style="padding:8px;font-size:14px;max-width:260px;
+                   max-height:200px;overflow-y:auto;word-break:break-word;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
+                  <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
+                </div>
+                <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
+                  <a href="/reviews?toiletId=${t.id}"
+                     style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
+                    <span class="iw-stars" aria-label="평점 ${avgTxt}">
+                      <span class="iw-stars-outer">★★★★★</span>
+                      <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
+                    </span>
+                    <span>${avgTxt} / 5</span>
+                  </a>
+                  <span style="color:#888;">(${cnt})</span>
+                </div>
+                <div style="margin-top:6px;color:#222;">
+                  ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
+                  ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
+                </div>
+              </div>`;
+        };
+
         const renderMarkers = () => {
           if (!Array.isArray(allToilets) || allToilets.length === 0) return;
           clearMarkers();
@@ -228,36 +260,9 @@
             const type = inferType(t);
             const position = new kakao.maps.LatLng(t.coordY, t.coordX);
             const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
+            marker.__toiletId = t.id;
 
-            const avgNum  = t.avgRating != null ? Number(t.avgRating) : 0;
-            const avgTxt  = avgNum.toFixed(1);
-            const cnt     = t.reviewCount != null ? t.reviewCount : 0;
-            const percent = Math.max(0, Math.min(100, (avgNum/5)*100)).toFixed(0);
-
-            const content = `
-              <div class="draggable-iw" style="padding:8px;font-size:14px;max-width:260px;
-                   max-height:200px;overflow-y:auto;word-break:break-word;">
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
-                  <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
-                </div>
-                <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
-                  <a href="/reviews?toiletId=${t.id}"
-                     style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
-                    <span class="iw-stars" aria-label="평점 ${avgTxt}">
-                      <span class="iw-stars-outer">★★★★★</span>
-                      <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
-                    </span>
-                    <span>${avgTxt} / 5</span>
-                  </a>
-                  <span style="color:#888;">(${cnt})</span>
-                </div>
-                <div style="margin-top:6px;color:#222;">
-                  ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
-                  ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
-                </div>
-              </div>`;
-            const infoWindow = new kakao.maps.InfoWindow({ content });
+            const infoWindow = new kakao.maps.InfoWindow({ content: buildInfoContent(t) });
 
             kakao.maps.event.addListener(marker, 'click', function () {
               if (openInfoWindow && openMarker === marker) {
@@ -299,6 +304,41 @@
         kakao.maps.event.addListener(map, 'dragstart', () => { userInteracted = true; });
         kakao.maps.event.addListener(map, 'idle', () => debouncedRender()); // 드래그/줌 후 중심 변경 시 재계산
 
+        const applyRatingUpdate = (update) => {
+          if (!update || update.toiletId == null) return;
+          const idx = indexById.get(update.toiletId);
+          if (idx == null) return;
+          const t = allToilets[idx];
+          t.avgRating = update.avgRating;
+          t.reviewCount = update.reviewCount;
+          if (openInfoWindow && openMarker && openMarker.__toiletId === update.toiletId) {
+            openInfoWindow.setContent(buildInfoContent(t));
+            setTimeout(() => {
+              const inner = document.querySelector('.draggable-iw');
+              if (inner) {
+                const wrapper = inner.parentElement && inner.parentElement.parentElement;
+                if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
+              }
+            }, 50);
+          }
+        };
+
+        const connectSse = () => {
+          if (sse) return;
+          sse = new EventSource('/sse/ratings');
+          sse.addEventListener('rating-updated', (e) => {
+            try {
+              const update = JSON.parse(e.data);
+              applyRatingUpdate(update);
+            } catch (err) {
+              console.warn('SSE parse error', err);
+            }
+          });
+          sse.onerror = () => {
+            // 브라우저가 자동 재연결을 시도한다.
+          };
+        };
+
         // 한 번 호출로 평점 포함 데이터 로드
         fetch(/*[[@{/toilets}]]*/ + '?withRatings=true')
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
@@ -308,8 +348,11 @@
               return;
             }
             allToilets = full;
+            indexById = new Map();
+            allToilets.forEach((t, i) => { if (t && t.id != null) indexById.set(t.id, i); });
             debouncedRender();
             setStatus(`<span class="ok">공공 화장실</span> · ${full.length}개 (평점 포함)`);
+            connectSse();
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);

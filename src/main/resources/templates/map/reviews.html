@@ -246,7 +246,8 @@
 
     const openRatingSse = () => {
         if (sse) return;
-        sse = new EventSource(SSE_URL);
+        const url = `${SSE_URL}?toiletId=${encodeURIComponent(toiletId)}`;
+        sse = new EventSource(url);
         sse.addEventListener('rating-updated', (e) => {
             try {
                 const data = JSON.parse(e.data);

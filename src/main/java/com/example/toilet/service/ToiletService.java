@@ -11,13 +11,17 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.PostConstruct;
 import java.io.InputStream;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -25,6 +29,7 @@ import java.util.Optional;
 public class ToiletService {
 
     private static final long MIN_LIST_TTL_MS = 1_000L;
+    private enum UpsertResult { SKIPPED, INSERTED, UPDATED }
 
     private final ToiletRepository toiletRepository;
 
@@ -46,6 +51,14 @@ public class ToiletService {
     @Value("${list.cache.enabled:true}")
     private boolean listCacheEnabled;
 
+    @Value("${toilet.sync.enabled:false}")
+    private boolean syncEnabled;
+
+    @Value("${toilet.sync.url:}")
+    private String syncUrl;
+
+    private final AtomicBoolean syncRunning = new AtomicBoolean(false);
+
     @PostConstruct
     public void init() {
         try {
@@ -53,51 +66,13 @@ public class ToiletService {
                 log.warn("list.cache.ttl-ms too small; adjusted to {}ms (current {}ms)", listCacheTtlMs, MIN_LIST_TTL_MS);
                 listCacheTtlMs = MIN_LIST_TTL_MS;
             }
-            ObjectMapper objectMapper = new ObjectMapper();
-            InputStream inputStream =
-                    new ClassPathResource(toiletDataPath.substring("classpath:".length())).getInputStream();
-            JsonNode rootNode = objectMapper.readTree(inputStream);
-            JsonNode dataNode = rootNode.get("DATA");
-
-            List<Map<String, Object>> data =
-                    objectMapper.convertValue(dataNode, new TypeReference<List<Map<String, Object>>>() {});
+            List<Toilet> initial = loadToiletsFromClasspath();
             long existingCount = toiletRepository.count();
-            if (existingCount >= data.size()) {
+            if (existingCount >= initial.size()) {
                 return;
             }
-
-            for (Map<String, Object> item : data) {
-                try {
-                    Object coordXObj = item.get("coord_x");
-                    Object coordYObj = item.get("coord_y");
-                    if (coordXObj == null || coordYObj == null) continue;
-                    String sx = coordXObj.toString().trim();
-                    String sy = coordYObj.toString().trim();
-                    if (sx.isEmpty() || sy.isEmpty()) continue;
-
-                    Toilet incoming = new Toilet();
-                    incoming.setContsName((String) item.get("conts_name"));
-                    incoming.setAddrNew((String) item.get("addr_new"));
-                    incoming.setAddrOld((String) item.get("addr_old"));
-                    incoming.setCoordX(Double.parseDouble(sx));
-                    incoming.setCoordY(Double.parseDouble(sy));
-                    incoming.setValue04((String) item.get("value_04"));
-                    incoming.setValue05((String) item.get("value_05"));
-
-                    String externalId = buildExternalId(
-                            incoming.getContsName(),
-                            incoming.getAddrNew(),
-                            incoming.getCoordX(),
-                            incoming.getCoordY()
-                    );
-                    incoming.setExternalId(externalId);
-
-                    upsert(incoming);
-
-                } catch (Exception ignore) {
-                    System.err.println("Skipped item due to parse error: " + item);
-                    ignore.printStackTrace();
-                }
+            for (Toilet t : initial) {
+                upsert(t);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -105,9 +80,22 @@ public class ToiletService {
     }
 
     public void upsert(Toilet incoming) {
+        UpsertResult result = upsertIfChanged(incoming);
+        if (result != UpsertResult.SKIPPED) {
+            evictListCache();
+        }
+    }
+
+    private UpsertResult upsertIfChanged(Toilet incoming) {
+        if (incoming == null || incoming.getExternalId() == null) {
+            return UpsertResult.SKIPPED;
+        }
         var opt = toiletRepository.findByExternalId(incoming.getExternalId());
         if (opt.isPresent()) {
             Toilet t = opt.get();
+            if (isSame(t, incoming)) {
+                return UpsertResult.SKIPPED;
+            }
             t.setContsName(incoming.getContsName());
             t.setAddrNew(incoming.getAddrNew());
             t.setAddrOld(incoming.getAddrOld());
@@ -116,10 +104,11 @@ public class ToiletService {
             t.setValue04(incoming.getValue04());
             t.setValue05(incoming.getValue05());
             toiletRepository.save(t);
+            return UpsertResult.UPDATED;
         } else {
             toiletRepository.save(incoming); // initial insert
+            return UpsertResult.INSERTED;
         }
-        evictListCache();
     }
 
     private static String buildExternalId(String name, String addrNew, Double x, Double y) {
@@ -135,6 +124,117 @@ public class ToiletService {
         } catch (Exception e) {
             return "FALLBACK_" + key.replace(' ', '_');
         }
+    }
+
+    private boolean isSame(Toilet current, Toilet incoming) {
+        if (current == null || incoming == null) return false;
+        return safeEq(current.getContsName(), incoming.getContsName())
+                && safeEq(current.getAddrNew(), incoming.getAddrNew())
+                && safeEq(current.getAddrOld(), incoming.getAddrOld())
+                && safeEq(current.getCoordX(), incoming.getCoordX())
+                && safeEq(current.getCoordY(), incoming.getCoordY())
+                && safeEq(current.getValue04(), incoming.getValue04())
+                && safeEq(current.getValue05(), incoming.getValue05());
+    }
+
+    private boolean safeEq(Object a, Object b) {
+        return a == null ? b == null : a.equals(b);
+    }
+
+    @Scheduled(fixedDelayString = "${toilet.sync.fixed-delay-ms:3600000}")
+    public void syncExternalData() {
+        if (!syncEnabled) return;
+        if (syncUrl == null || syncUrl.isBlank()) return;
+        if (!syncRunning.compareAndSet(false, true)) {
+            log.debug("toilet sync skipped: previous run still active");
+            return;
+        }
+        long start = System.nanoTime();
+        int inserted = 0;
+        int updated = 0;
+        int skipped = 0;
+        try {
+            List<Toilet> incoming = fetchToiletsFromUrl(syncUrl);
+            for (Toilet t : incoming) {
+                UpsertResult result = upsertIfChanged(t);
+                if (result == UpsertResult.INSERTED) inserted++;
+                else if (result == UpsertResult.UPDATED) updated++;
+                else skipped++;
+            }
+            if (inserted + updated > 0) {
+                evictListCache();
+            }
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            log.info("toilet sync done: inserted={}, updated={}, skipped={}, total={}, {} ms",
+                    inserted, updated, skipped, incoming.size(), elapsedMs);
+        } catch (Exception e) {
+            log.warn("toilet sync failed: {}", e.getMessage(), e);
+        } finally {
+            syncRunning.set(false);
+        }
+    }
+
+    private List<Toilet> loadToiletsFromClasspath() throws Exception {
+        InputStream inputStream =
+                new ClassPathResource(toiletDataPath.substring("classpath:".length())).getInputStream();
+        return parseToilets(inputStream);
+    }
+
+    private List<Toilet> fetchToiletsFromUrl(String url) throws Exception {
+        RestTemplate restTemplate = new RestTemplate();
+        InputStream inputStream = restTemplate.execute(
+                URI.create(url),
+                org.springframework.http.HttpMethod.GET,
+                null,
+                response -> response.getBody()
+        );
+        if (inputStream == null) {
+            throw new IllegalStateException("empty response body");
+        }
+        return parseToilets(inputStream);
+    }
+
+    private List<Toilet> parseToilets(InputStream inputStream) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode rootNode = objectMapper.readTree(inputStream);
+        JsonNode dataNode = rootNode.get("DATA");
+        List<Map<String, Object>> data =
+                objectMapper.convertValue(dataNode, new TypeReference<List<Map<String, Object>>>() {});
+
+        return data.stream()
+                .map(item -> {
+                    try {
+                        Object coordXObj = item.get("coord_x");
+                        Object coordYObj = item.get("coord_y");
+                        if (coordXObj == null || coordYObj == null) return null;
+                        String sx = coordXObj.toString().trim();
+                        String sy = coordYObj.toString().trim();
+                        if (sx.isEmpty() || sy.isEmpty()) return null;
+
+                        Toilet incoming = new Toilet();
+                        incoming.setContsName((String) item.get("conts_name"));
+                        incoming.setAddrNew((String) item.get("addr_new"));
+                        incoming.setAddrOld((String) item.get("addr_old"));
+                        incoming.setCoordX(Double.parseDouble(sx));
+                        incoming.setCoordY(Double.parseDouble(sy));
+                        incoming.setValue04((String) item.get("value_04"));
+                        incoming.setValue05((String) item.get("value_05"));
+
+                        String externalId = buildExternalId(
+                                incoming.getContsName(),
+                                incoming.getAddrNew(),
+                                incoming.getCoordX(),
+                                incoming.getCoordY()
+                        );
+                        incoming.setExternalId(externalId);
+                        return incoming;
+                    } catch (Exception e) {
+                        log.debug("Skipped item due to parse error: {}", item, e);
+                        return null;
+                    }
+                })
+                .filter(t -> t != null)
+                .toList();
     }
 
     public List<Toilet> getAllToilets() { return toiletRepository.findAll(); }

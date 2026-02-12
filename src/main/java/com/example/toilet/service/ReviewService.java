@@ -9,12 +9,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @AllArgsConstructor
 @Transactional(readOnly = true)
 public class ReviewService {
+    private static final Object SSE_TX_RESOURCE_KEY = new Object();
 
     private final ReviewRepository reviewRepository;
     private final ToiletRepository toiletRepository;
@@ -109,12 +112,28 @@ public class ReviewService {
             ratingSseService.publishRatingUpdateAsync(toiletId);
             return;
         }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                ratingSseService.publishRatingUpdateAsync(toiletId);
-            }
-        });
+        @SuppressWarnings("unchecked")
+        Set<Long> pendingToiletIds = (Set<Long>) TransactionSynchronizationManager.getResource(SSE_TX_RESOURCE_KEY);
+        if (pendingToiletIds == null) {
+            pendingToiletIds = new LinkedHashSet<>();
+            TransactionSynchronizationManager.bindResource(SSE_TX_RESOURCE_KEY, pendingToiletIds);
+            Set<Long> idsForTx = pendingToiletIds;
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    try {
+                        if (status == TransactionSynchronization.STATUS_COMMITTED) {
+                            for (Long id : idsForTx) {
+                                ratingSseService.publishRatingUpdateAsync(id);
+                            }
+                        }
+                    } finally {
+                        TransactionSynchronizationManager.unbindResource(SSE_TX_RESOURCE_KEY);
+                    }
+                }
+            });
+        }
+        pendingToiletIds.add(toiletId);
     }
 
     private void recalculateToiletAggregate(Long toiletId) {

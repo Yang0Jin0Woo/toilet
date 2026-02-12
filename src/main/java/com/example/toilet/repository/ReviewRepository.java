@@ -30,6 +30,11 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
         Long getCnt();
     }
 
+    interface SingleRatingTotalAgg {
+        Long getSum();
+        Long getCnt();
+    }
+
     @Query("""
            select r.toilet.id as toiletId, avg(r.rating) as avg, count(r) as cnt
            from Review r
@@ -44,6 +49,13 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
            where r.toilet.id = :toiletId and (r.blocked = false or r.blocked is null)
            """)
     SingleRatingAgg aggregateByToiletId(Long toiletId);
+
+    @Query("""
+           select coalesce(sum(r.rating), 0) as sum, count(r) as cnt
+           from Review r
+           where r.toilet.id = :toiletId and (r.blocked = false or r.blocked is null)
+           """)
+    SingleRatingTotalAgg aggregateTotalsByToiletId(Long toiletId);
 
     @Modifying
     @Query("""

@@ -28,8 +28,8 @@
           background:#fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.08);
           padding: 8px 10px; font-size: 12px; color:#333; min-width: 160px; text-align: right;
         }
-        .status .ok { color:#2e7d32; }
-        .status .warn { color:#c62828; }
+        .status.ok { color:#2e7d32; }
+        .status.warn { color:#c62828; }
     </style>
 </head>
 <body>
@@ -49,10 +49,12 @@
     kakao.maps.load(function() {
       const statusEl = document.getElementById('status');
 
-      function setStatus(html, ok=true) {
-        statusEl.innerHTML = html;
+      function setStatus(text, tone='ok') {
+        statusEl.textContent = text;
+        statusEl.classList.remove('ok', 'warn');
+        statusEl.classList.add(tone === 'warn' ? 'warn' : 'ok');
         statusEl.classList.remove('is-error');
-        statusEl.classList.toggle('is-error', !ok);
+        statusEl.classList.toggle('is-error', tone === 'warn');
       }
 
       const fallbackLat = 37.566826, fallbackLng = 126.9786567;
@@ -62,6 +64,8 @@
       let markers = [];
       let openInfoWindow = null;
       let openMarker     = null;
+      let openInfoContentEl = null;
+      let sharedInfoWindow = null;
       let map;
       let userInteracted = false; // 지도 드래그/줌 이후에는 자동 재중심을 막기 위한 플래그
       let sse = null;
@@ -84,6 +88,7 @@
         map = new kakao.maps.Map(document.getElementById('map'), {
           center: new kakao.maps.LatLng(lat, lng), level: 3
         });
+        sharedInfoWindow = new kakao.maps.InfoWindow({ removable: true });
         map.setMinLevel(1); // 줌 인 최댓값(숫자 작을수록 확대)
         map.setMaxLevel(6); // 줌 아웃 최댓값
 
@@ -102,13 +107,15 @@
         }
 
         const makePinDataUrl = (fill, dotFill = '#ffffff') => {
+          const color = typeof fill === 'string' && /^#[0-9a-fA-F]{6}$/.test(fill) ? fill : '#757575';
+          const dot = typeof dotFill === 'string' && /^#[0-9a-fA-F]{6}$/.test(dotFill) ? dotFill : '#ffffff';
           const svg =
             `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
                <defs><filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
                  <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.35"/></filter></defs>
-               <path fill="${fill}" filter="url(#shadow)"
+               <path fill="${color}" filter="url(#shadow)"
                      d="M24 0C12.954 0 4 8.954 4 20c0 13.255 20 44 20 44s20-30.745 20-44C44 8.954 35.046 0 24 0z"/>
-               <circle cx="24" cy="20" r="7" fill="${dotFill}"/>
+               <circle cx="24" cy="20" r="7" fill="${dot}"/>
              </svg>`;
           return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
         };
@@ -203,7 +210,16 @@
             openInfoWindow.close();
             openInfoWindow = null;
             openMarker = null;
+            openInfoContentEl = null;
           }
+        };
+
+        const resizeInfoWindowToContent = (contentEl) => {
+          if (!contentEl) return;
+          setTimeout(() => {
+            const wrapper = contentEl.parentElement && contentEl.parentElement.parentElement;
+            if (wrapper) wrapper.style.height = contentEl.scrollHeight + 'px';
+          }, 50);
         };
 
         const buildInfoContent = (t) => {
@@ -234,6 +250,79 @@
                   ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
                 </div>
               </div>`;
+        };
+
+        const buildInfoContentSafe = (t) => {
+          const avgRaw = Number(t && t.avgRating != null ? t.avgRating : 0);
+          const avgNum = Number.isFinite(avgRaw) ? Math.max(0, Math.min(5, avgRaw)) : 0;
+          const avgTxt = avgNum.toFixed(1);
+          const cntRaw = Number(t && t.reviewCount != null ? t.reviewCount : 0);
+          const cnt = Number.isFinite(cntRaw) && cntRaw > 0 ? Math.floor(cntRaw) : 0;
+          const percent = Math.max(0, Math.min(100, (avgNum / 5) * 100)).toFixed(0);
+
+          const wrap = document.createElement('div');
+          wrap.className = 'draggable-iw';
+          wrap.style.cssText = 'padding:8px;font-size:14px;max-width:260px;max-height:200px;overflow-y:auto;word-break:break-word;';
+
+          const topRow = document.createElement('div');
+          topRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+          const icon = document.createElement('i');
+          icon.className = 'bi bi-badge-wc';
+          icon.setAttribute('aria-hidden', 'true');
+          icon.style.fontSize = '20px';
+          const name = document.createElement('strong');
+          name.style.cssText = 'font-size:18px;line-height:1.2;';
+          name.textContent = t.contsName ?? '';
+          topRow.appendChild(icon);
+          topRow.appendChild(name);
+          wrap.appendChild(topRow);
+
+          const ratingRow = document.createElement('div');
+          ratingRow.style.cssText = 'margin-top:8px;display:flex;align-items:center;gap:6px;';
+          const link = document.createElement('a');
+          link.href = '/reviews?toiletId=' + encodeURIComponent(String(t.id ?? ''));
+          link.style.cssText = 'text-decoration:none;color:inherit;display:inline-flex;align-items:center;gap:6px;';
+
+          const stars = document.createElement('span');
+          stars.className = 'iw-stars';
+          stars.setAttribute('aria-label', '\uD3C9\uC810 ' + avgTxt);
+          const starsOuter = document.createElement('span');
+          starsOuter.className = 'iw-stars-outer';
+          starsOuter.textContent = '\u2605\u2605\u2605\u2605\u2605';
+          const starsInner = document.createElement('span');
+          starsInner.className = 'iw-stars-inner';
+          starsInner.style.width = percent + '%';
+          starsInner.textContent = '\u2605\u2605\u2605\u2605\u2605';
+          stars.appendChild(starsOuter);
+          stars.appendChild(starsInner);
+
+          const avgText = document.createElement('span');
+          avgText.textContent = avgTxt + ' / 5';
+          link.appendChild(stars);
+          link.appendChild(avgText);
+          ratingRow.appendChild(link);
+
+          const cntText = document.createElement('span');
+          cntText.style.color = '#888';
+          cntText.textContent = '(' + cnt + ')';
+          ratingRow.appendChild(cntText);
+          wrap.appendChild(ratingRow);
+
+          const addrWrap = document.createElement('div');
+          addrWrap.style.cssText = 'margin-top:6px;color:#222;';
+          if (t.addrNew) {
+            const road = document.createElement('div');
+            road.textContent = '\uB3C4\uB85C\uBA85 ' + t.addrNew;
+            addrWrap.appendChild(road);
+          }
+          if (t.addrOld) {
+            const jibun = document.createElement('div');
+            jibun.textContent = '\uC9C0\uBC88 ' + t.addrOld;
+            addrWrap.appendChild(jibun);
+          }
+          wrap.appendChild(addrWrap);
+
+          return wrap;
         };
 
         const renderMarkers = () => {
@@ -268,39 +357,33 @@
             const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
             marker.__toiletId = t.id;
 
-            const infoWindow = new kakao.maps.InfoWindow({ content: buildInfoContent(t) });
-
             kakao.maps.event.addListener(marker, 'click', function () {
               if (openInfoWindow && openMarker === marker) {
                 openInfoWindow.close(); marker.setImage(markerImage(type, false));
-                openInfoWindow = openMarker = null; return;
+                openInfoWindow = openMarker = openInfoContentEl = null; return;
               }
               if (openInfoWindow && openMarker) {
                 openInfoWindow.close();
                 openMarker.setImage(openMarker.__inactiveImage || markerImage('unknown', false));
+                openInfoContentEl = null;
               }
               marker.__inactiveImage = markerImage(type, false);
 
               const bounds = map.getBounds();
               if (!bounds.contain(position)) map.panTo(position);
 
-              infoWindow.open(map, marker);
+              const contentEl = buildInfoContentSafe(t);
+              sharedInfoWindow.setContent(contentEl);
+              sharedInfoWindow.open(map, marker);
               marker.setImage(markerImage(type, true));
-              openInfoWindow = infoWindow; openMarker = marker;
-
-              setTimeout(() => {
-                const inner = document.querySelector('.draggable-iw');
-                if (inner) {
-                  const wrapper = inner.parentElement && inner.parentElement.parentElement;
-                  if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
-                }
-              }, 50);
+              openInfoWindow = sharedInfoWindow; openMarker = marker; openInfoContentEl = contentEl;
+              resizeInfoWindowToContent(contentEl);
             });
 
             markers.push(marker);
           });
 
-          setStatus(`<span class="ok">공공 화장실</span> · ${selected.length}개 (zoom:${map.getLevel()})`);
+          setStatus(`\uACF5\uACF5 \uD654\uC7A5\uC2E4 · ${selected.length}\uAC1C (zoom:${map.getLevel()})`, 'ok');
           const t1 = perf && perf.now ? perf.now() : Date.now();
           console.log(`[renderMarkers#${seq}] total=${(t1 - t0).toFixed(1)}ms filtered=${filtered.length} selected=${selected.length} zoom=${map.getLevel()}`);
         };
@@ -317,17 +400,15 @@
           const idx = indexById.get(update.toiletId);
           if (idx == null) return;
           const t = allToilets[idx];
-          t.avgRating = update.avgRating;
-          t.reviewCount = update.reviewCount;
-          if (openInfoWindow && openMarker && openMarker.__toiletId === update.toiletId) {
-            openInfoWindow.setContent(buildInfoContent(t));
-            setTimeout(() => {
-              const inner = document.querySelector('.draggable-iw');
-              if (inner) {
-                const wrapper = inner.parentElement && inner.parentElement.parentElement;
-                if (wrapper) wrapper.style.height = inner.scrollHeight + 'px';
-              }
-            }, 50);
+          const nextAvg = Number(update.avgRating);
+          const nextCnt = Number(update.reviewCount);
+          t.avgRating = Number.isFinite(nextAvg) ? Math.max(0, Math.min(5, nextAvg)) : 0;
+          t.reviewCount = Number.isFinite(nextCnt) && nextCnt > 0 ? Math.floor(nextCnt) : 0;
+          if (openMarker && openMarker.__toiletId === update.toiletId && sharedInfoWindow) {
+            const nextContentEl = buildInfoContentSafe(t);
+            sharedInfoWindow.setContent(nextContentEl);
+            openInfoContentEl = nextContentEl;
+            resizeInfoWindowToContent(nextContentEl);
           }
         };
 
@@ -377,7 +458,7 @@
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(full => {
             if (!Array.isArray(full) || full.length === 0) {
-              setStatus('<span class="warn">데이터 0개</span>', true);
+              setStatus('\uB370\uC774\uD130 0\uAC1C', 'warn');
               return;
             }
             allToilets = full;
@@ -386,12 +467,12 @@
             debouncedRender();
             const fetchEnd = perf && perf.now ? perf.now() : Date.now();
             console.log(`[fetch/toilets] items=${full.length} total=${(fetchEnd - fetchStart).toFixed(1)}ms`);
-            setStatus(`<span class="ok">공공 화장실</span> · ${full.length}개 (평점 포함)`);
+            setStatus(`\uACF5\uACF5 \uD654\uC7A5\uC2E4 · ${full.length}\uAC1C (\uD3C9\uC810 \uD3EC\uD568)`, 'ok');
             connectSse();
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);
-            setStatus('<span class="warn">데이터 로드 실패</span> · 콘솔 확인', false);
+            setStatus('\uB370\uC774\uD130 \uB85C\uB4DC \uC2E4\uD328 · \uCF58\uC194 \uD655\uC778', 'warn');
           });
       }
     });

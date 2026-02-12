@@ -26,9 +26,11 @@ public class ReviewService {
     }
 
     public double averageForToilet(Long toiletId) {
-        return toiletRepository.findById(toiletId)
-                .map(t -> t.getAvgRatingComputed())
-                .orElse(0.0);
+        var agg = reviewRepository.aggregateByToiletId(toiletId);
+        if (agg == null || agg.getAvg() == null) {
+            return 0.0;
+        }
+        return agg.getAvg();
     }
 
     @Transactional
@@ -41,14 +43,7 @@ public class ReviewService {
         }
         Long toiletId = r.getToilet().getId();
         Review saved = reviewRepository.save(r);
-        int updated = toiletRepository.applyRatingDelta(
-                toiletId,
-                saved.getRating(),
-                1L
-        );
-        if (updated == 0) {
-            throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
-        }
+        recalculateToiletAggregate(toiletId);
         toiletService.evictListCache();
         publishAfterCommit(toiletId);
         return saved;
@@ -63,21 +58,10 @@ public class ReviewService {
         if (toiletId == null) {
             throw new IllegalStateException("toiletId is required for reviewId: " + reviewId);
         }
-        int oldRating = review.getRating() == null ? 0 : review.getRating();
         review.setRating(newRating);
         review.setComment(newComment);
         Review saved = reviewRepository.save(review);
-        long delta = (long) newRating - (long) oldRating;
-        if (delta != 0) {
-            int updated = toiletRepository.applyRatingDelta(
-                    toiletId,
-                    delta,
-                    0L
-            );
-            if (updated == 0) {
-                throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
-            }
-        }
+        recalculateToiletAggregate(toiletId);
         toiletService.evictListCache();
         publishAfterCommit(toiletId);
         return saved;
@@ -91,16 +75,8 @@ public class ReviewService {
         if (toiletId == null) {
             throw new IllegalStateException("toiletId is required for reviewId: " + reviewId);
         }
-        long rating = review.getRating() == null ? 0L : review.getRating();
         reviewRepository.delete(review);
-        int updated = toiletRepository.applyRatingDelta(
-                toiletId,
-                -rating,
-                -1L
-        );
-        if (updated == 0) {
-            throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
-        }
+        recalculateToiletAggregate(toiletId);
         toiletService.evictListCache();
         publishAfterCommit(toiletId);
     }
@@ -113,22 +89,13 @@ public class ReviewService {
         if (toiletId == null) {
             throw new IllegalStateException("toiletId is required for reviewId: " + reviewId);
         }
-        long rating = review.getRating() == null ? 0L : review.getRating();
-
         int updated = reviewRepository.incrementReportCount(reviewId);
         if (updated == 0) {
             throw new IllegalArgumentException("Invalid reviewId: " + reviewId);
         }
         int deleted = reviewRepository.deleteIfReportCountGte(reviewId, blockThreshold);
         if (deleted > 0) {
-            int aggUpdated = toiletRepository.applyRatingDelta(
-                    toiletId,
-                    -rating,
-                    -1L
-            );
-            if (aggUpdated == 0) {
-                throw new IllegalStateException("Failed to update toilet rating aggregate: " + toiletId);
-            }
+            recalculateToiletAggregate(toiletId);
             toiletService.evictListCache();
             publishAfterCommit(toiletId);
             return true;
@@ -148,5 +115,18 @@ public class ReviewService {
                 ratingSseService.publishRatingUpdateAsync(toiletId);
             }
         });
+    }
+
+    private void recalculateToiletAggregate(Long toiletId) {
+        if (toiletId == null) {
+            throw new IllegalArgumentException("toiletId is required");
+        }
+        var totals = reviewRepository.aggregateTotalsByToiletId(toiletId);
+        long sum = totals == null || totals.getSum() == null ? 0L : totals.getSum();
+        long cnt = totals == null || totals.getCnt() == null ? 0L : totals.getCnt();
+        int updated = toiletRepository.overwriteRatingAgg(toiletId, sum, cnt);
+        if (updated == 0) {
+            throw new IllegalStateException("Failed to overwrite toilet rating aggregate: " + toiletId);
+        }
     }
 }

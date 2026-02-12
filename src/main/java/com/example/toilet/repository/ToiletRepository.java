@@ -63,6 +63,17 @@ public interface ToiletRepository extends JpaRepository<Toilet, Long> {
     int applyRatingDelta(@Param("toiletId") Long toiletId,
                          @Param("deltaSum") long deltaSum,
                          @Param("deltaCount") long deltaCount);
+
+    @Modifying
+    @Query("""
+           update Toilet t
+           set t.ratingSum = :ratingSum,
+               t.ratingCount = :ratingCount
+           where t.id = :toiletId
+           """)
+    int overwriteRatingAgg(@Param("toiletId") Long toiletId,
+                           @Param("ratingSum") long ratingSum,
+                           @Param("ratingCount") long ratingCount);
 }
 
 

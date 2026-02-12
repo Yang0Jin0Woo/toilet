@@ -7,8 +7,8 @@
     <title>Public Toilet Map</title>
 
     <script th:src="@{'https://dapi.kakao.com/v2/maps/sdk.js'
-                + '?appkey=' + ${kakaoApiKey}
-                + '&libraries=services&autoload=false'}"></script>
+      + '?appkey=' + ${kakaoApiKey}
+      + '&libraries=services,clusterer&autoload=false'}"></script>
 
     <style>
         .legend {
@@ -32,6 +32,7 @@
         .status.warn { color:#c62828; }
     </style>
 </head>
+
 <body>
 <div id="map" style="width:100%; height:100vh; position: relative;"></div>
 
@@ -48,7 +49,6 @@
     /*<![CDATA[*/
     kakao.maps.load(function() {
       const statusEl = document.getElementById('status');
-
       function setStatus(text, tone='ok') {
         statusEl.textContent = text;
         statusEl.classList.remove('ok', 'warn');
@@ -59,25 +59,39 @@
 
       const fallbackLat = 37.566826, fallbackLng = 126.9786567;
       let userPosition = { lat: fallbackLat, lng: fallbackLng };
+
       let allToilets = [];
       let indexById = new Map();
+
       let markers = [];
       let openInfoWindow = null;
-      let openMarker     = null;
+      let openMarker = null;
       let openInfoContentEl = null;
       let sharedInfoWindow = null;
+
+      let clusterer = null;
+      const CLUSTER_ON_LEVEL = 5;
+
       let map;
-      let userInteracted = false; // 지도 드래그/줌 이후에는 자동 재중심을 막기 위한 플래그
+      let userInteracted = false;
+
       let sse = null;
       const SSE_URL = '/sse/ratings';
+
       let renderSeq = 0;
       const perf = window.performance;
       let geoWatchId = null;
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          pos => { userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude }; initMap(userPosition.lat, userPosition.lng); },
-          err => { console.warn('위치 정보 불가, 기본 위치 사용', err); initMap(fallbackLat, fallbackLng); },
+          pos => {
+            userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            initMap(userPosition.lat, userPosition.lng);
+          },
+          err => {
+            console.warn('위치 정보 불가, 기본 위치 사용', err);
+            initMap(fallbackLat, fallbackLng);
+          },
           { enableHighAccuracy: true, timeout: 3000 }
         );
       } else {
@@ -86,11 +100,21 @@
 
       function initMap(lat, lng) {
         map = new kakao.maps.Map(document.getElementById('map'), {
-          center: new kakao.maps.LatLng(lat, lng), level: 3
+          center: new kakao.maps.LatLng(lat, lng),
+          level: 3
         });
+
         sharedInfoWindow = new kakao.maps.InfoWindow({ removable: true });
-        map.setMinLevel(1); // 줌 인 최댓값(숫자 작을수록 확대)
-        map.setMaxLevel(6); // 줌 아웃 최댓값
+
+        clusterer = new kakao.maps.MarkerClusterer({
+          map: map,
+          averageCenter: true,
+          minLevel: CLUSTER_ON_LEVEL,
+          disableClickZoom: false
+        });
+
+        map.setMinLevel(1);
+        map.setMaxLevel(6);
 
         if (navigator.geolocation) {
           geoWatchId = navigator.geolocation.watchPosition(
@@ -119,14 +143,17 @@
              </svg>`;
           return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
         };
+
         const COLORS = {
           male: { normal:'#1E88E5', active:'#1565C0' },
           female: { normal:'#E53935', active:'#C62828' },
           disabled: { normal:'#FDD835', active:'#F9A825' },
           unknown: { normal:'#757575', active:'#424242' }
         };
+
         const imageSize = new kakao.maps.Size(36, 48);
         const imageOpt  = { offset: new kakao.maps.Point(18, 48) };
+
         const markerImage = (type, active=false) =>
           new kakao.maps.MarkerImage(makePinDataUrl(COLORS[type][active?'active':'normal']), imageSize, imageOpt);
 
@@ -148,7 +175,7 @@
           const dLat = toRad(lat2 - lat1);
           const dLng = toRad(lng2 - lng1);
           const a = Math.sin(dLat/2)**2 +
-                    Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+            Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
           return R * c;
         };
@@ -161,7 +188,7 @@
           };
         };
 
-        // Bounded max-heap: keep only N nearest items (largest distance removed first).
+        // Bounded max-heap (Top-N nearest)
         class BoundedMaxHeap {
           constructor(limit) { this.h = []; this.limit = limit; }
           push(node) {
@@ -204,8 +231,11 @@
         };
 
         const clearMarkers = () => {
+          if (clusterer) clusterer.clear();
+
           markers.forEach(m => m.setMap(null));
           markers = [];
+
           if (openInfoWindow && openMarker) {
             openInfoWindow.close();
             openInfoWindow = null;
@@ -222,42 +252,14 @@
           }, 50);
         };
 
-        const buildInfoContent = (t) => {
-          const avgNum  = t.avgRating != null ? Number(t.avgRating) : 0;
-          const avgTxt  = avgNum.toFixed(1);
-          const cnt     = t.reviewCount != null ? t.reviewCount : 0;
-          const percent = Math.max(0, Math.min(100, (avgNum/5)*100)).toFixed(0);
-          return `
-              <div class="draggable-iw" style="padding:8px;font-size:14px;max-width:260px;
-                   max-height:200px;overflow-y:auto;word-break:break-word;">
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <i class="bi bi-badge-wc" aria-hidden="true" style="font-size:20px;"></i>
-                  <strong style="font-size:18px;line-height:1.2;">${t.contsName ?? ''}</strong>
-                </div>
-                <div style="margin-top:8px; display:flex; align-items:center; gap:6px;">
-                  <a href="/reviews?toiletId=${t.id}"
-                     style="text-decoration:none; color:inherit; display:inline-flex; align-items:center; gap:6px;">
-                    <span class="iw-stars" aria-label="평점 ${avgTxt}">
-                      <span class="iw-stars-outer">★★★★★</span>
-                      <span class="iw-stars-inner" style="width:${percent}%">★★★★★</span>
-                    </span>
-                    <span>${avgTxt} / 5</span>
-                  </a>
-                  <span style="color:#888;">(${cnt})</span>
-                </div>
-                <div style="margin-top:6px;color:#222;">
-                  ${t.addrNew ? ('도로명 ' + t.addrNew + '<br>') : ''}
-                  ${t.addrOld ? ('지번 ' + t.addrOld) : ''}
-                </div>
-              </div>`;
-        };
-
         const buildInfoContentSafe = (t) => {
           const avgRaw = Number(t && t.avgRating != null ? t.avgRating : 0);
           const avgNum = Number.isFinite(avgRaw) ? Math.max(0, Math.min(5, avgRaw)) : 0;
           const avgTxt = avgNum.toFixed(1);
+
           const cntRaw = Number(t && t.reviewCount != null ? t.reviewCount : 0);
           const cnt = Number.isFinite(cntRaw) && cntRaw > 0 ? Math.floor(cntRaw) : 0;
+
           const percent = Math.max(0, Math.min(100, (avgNum / 5) * 100)).toFixed(0);
 
           const wrap = document.createElement('div');
@@ -266,74 +268,89 @@
 
           const topRow = document.createElement('div');
           topRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
           const icon = document.createElement('i');
           icon.className = 'bi bi-badge-wc';
           icon.setAttribute('aria-hidden', 'true');
           icon.style.fontSize = '20px';
+
           const name = document.createElement('strong');
           name.style.cssText = 'font-size:18px;line-height:1.2;';
           name.textContent = t.contsName ?? '';
+
           topRow.appendChild(icon);
           topRow.appendChild(name);
           wrap.appendChild(topRow);
 
           const ratingRow = document.createElement('div');
           ratingRow.style.cssText = 'margin-top:8px;display:flex;align-items:center;gap:6px;';
+
           const link = document.createElement('a');
           link.href = '/reviews?toiletId=' + encodeURIComponent(String(t.id ?? ''));
           link.style.cssText = 'text-decoration:none;color:inherit;display:inline-flex;align-items:center;gap:6px;';
 
           const stars = document.createElement('span');
           stars.className = 'iw-stars';
-          stars.setAttribute('aria-label', '\uD3C9\uC810 ' + avgTxt);
+          stars.setAttribute('aria-label', '평점 ' + avgTxt);
+
           const starsOuter = document.createElement('span');
           starsOuter.className = 'iw-stars-outer';
-          starsOuter.textContent = '\u2605\u2605\u2605\u2605\u2605';
+          starsOuter.textContent = '★★★★★';
+
           const starsInner = document.createElement('span');
           starsInner.className = 'iw-stars-inner';
           starsInner.style.width = percent + '%';
-          starsInner.textContent = '\u2605\u2605\u2605\u2605\u2605';
+          starsInner.textContent = '★★★★★';
+
           stars.appendChild(starsOuter);
           stars.appendChild(starsInner);
 
           const avgText = document.createElement('span');
           avgText.textContent = avgTxt + ' / 5';
+
           link.appendChild(stars);
           link.appendChild(avgText);
+
           ratingRow.appendChild(link);
 
           const cntText = document.createElement('span');
           cntText.style.color = '#888';
           cntText.textContent = '(' + cnt + ')';
+
           ratingRow.appendChild(cntText);
           wrap.appendChild(ratingRow);
 
           const addrWrap = document.createElement('div');
           addrWrap.style.cssText = 'margin-top:6px;color:#222;';
+
           if (t.addrNew) {
             const road = document.createElement('div');
-            road.textContent = '\uB3C4\uB85C\uBA85 ' + t.addrNew;
+            road.textContent = '도로명 ' + t.addrNew;
             addrWrap.appendChild(road);
           }
           if (t.addrOld) {
             const jibun = document.createElement('div');
-            jibun.textContent = '\uC9C0\uBC88 ' + t.addrOld;
+            jibun.textContent = '지번 ' + t.addrOld;
             addrWrap.appendChild(jibun);
           }
-          wrap.appendChild(addrWrap);
 
+          wrap.appendChild(addrWrap);
           return wrap;
         };
 
+        // 클러스터(줌아웃) = viewport 전체 / 비클러스터(줌인) = Top-N 유지
         const renderMarkers = () => {
           const seq = ++renderSeq;
           const t0 = perf && perf.now ? perf.now() : Date.now();
           if (!Array.isArray(allToilets) || allToilets.length === 0) return;
+
           clearMarkers();
 
           const center = map.getCenter();
-          const origin = { lat: center.getLat(), lng: center.getLng() }; // 줌/이동 후 현재 지도 중심 기준
-          const limit = limitForZoom(map.getLevel());
+          const origin = { lat: center.getLat(), lng: center.getLng() };
+
+          const level = map.getLevel();
+          const useCluster = level >= CLUSTER_ON_LEVEL;
 
           const bounds = map.getBounds();
           const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
@@ -344,48 +361,78 @@
                 && t.coordX >= sw.getLng() && t.coordX <= ne.getLng();
           });
 
-          const heap = new BoundedMaxHeap(limit);
-          filtered.forEach(t => {
-            const dist = haversine(origin.lat, origin.lng, t.coordY, t.coordX);
-            heap.push({ toilet: t, dist });
-          });
-          const selected = heap.toArray().sort((a,b) => a.dist - b.dist);
+          let selectedToilets;
 
-          selected.forEach(({ toilet: t }) => {
+          if (useCluster) {
+            // 클러스터 모드: viewport 내 전체 대상
+            selectedToilets = filtered;
+          } else {
+            // 기존 Top-N
+            const limit = limitForZoom(level);
+            const heap = new BoundedMaxHeap(limit);
+            filtered.forEach(t => {
+              const dist = haversine(origin.lat, origin.lng, t.coordY, t.coordX);
+              heap.push({ toilet: t, dist });
+            });
+            selectedToilets = heap.toArray()
+              .sort((a,b)=>a.dist-b.dist)
+              .map(x=>x.toilet);
+          }
+
+          selectedToilets.forEach(t => {
             const type = inferType(t);
             const position = new kakao.maps.LatLng(t.coordY, t.coordX);
-            const marker   = new kakao.maps.Marker({ map, position, image: markerImage(type, false) });
+
+            const marker = new kakao.maps.Marker({ position, image: markerImage(type, false) });
             marker.__toiletId = t.id;
 
-            kakao.maps.event.addListener(marker, 'click', function () {
+            if (!useCluster) marker.setMap(map);
+
+            kakao.maps.event.addListener(marker, 'click', function() {
               if (openInfoWindow && openMarker === marker) {
-                openInfoWindow.close(); marker.setImage(markerImage(type, false));
-                openInfoWindow = openMarker = openInfoContentEl = null; return;
+                openInfoWindow.close();
+                marker.setImage(markerImage(type, false));
+                openInfoWindow = openMarker = openInfoContentEl = null;
+                return;
               }
+
               if (openInfoWindow && openMarker) {
                 openInfoWindow.close();
                 openMarker.setImage(openMarker.__inactiveImage || markerImage('unknown', false));
                 openInfoContentEl = null;
               }
+
               marker.__inactiveImage = markerImage(type, false);
 
-              const bounds = map.getBounds();
-              if (!bounds.contain(position)) map.panTo(position);
+              const b = map.getBounds();
+              if (!b.contain(position)) map.panTo(position);
 
               const contentEl = buildInfoContentSafe(t);
               sharedInfoWindow.setContent(contentEl);
               sharedInfoWindow.open(map, marker);
+
               marker.setImage(markerImage(type, true));
-              openInfoWindow = sharedInfoWindow; openMarker = marker; openInfoContentEl = contentEl;
+              openInfoWindow = sharedInfoWindow;
+              openMarker = marker;
+              openInfoContentEl = contentEl;
+
               resizeInfoWindowToContent(contentEl);
             });
 
             markers.push(marker);
           });
 
-          setStatus(`\uACF5\uACF5 \uD654\uC7A5\uC2E4 · ${selected.length}\uAC1C (zoom:${map.getLevel()})`, 'ok');
+          if (useCluster && clusterer) {
+            clusterer.addMarkers(markers);
+          }
+
+          setStatus(`공공 화장실 · ${selectedToilets.length}개 (zoom:${level})`, 'ok');
+
           const t1 = perf && perf.now ? perf.now() : Date.now();
-          console.log(`[renderMarkers#${seq}] total=${(t1 - t0).toFixed(1)}ms filtered=${filtered.length} selected=${selected.length} zoom=${map.getLevel()}`);
+          console.log(
+            `[renderMarkers#${seq}] total=${(t1 - t0).toFixed(1)}ms ` +
+            `filtered=${filtered.length} selected=${selectedToilets.length} zoom=${level} clustered=${useCluster}`
+          );
         };
 
         const debouncedRender = debounce(renderMarkers, 120);
@@ -393,17 +440,20 @@
         kakao.maps.event.addListener(map, 'zoom_changed', () => debouncedRender());
         kakao.maps.event.addListener(map, 'zoom_start', () => { userInteracted = true; });
         kakao.maps.event.addListener(map, 'dragstart', () => { userInteracted = true; });
-        kakao.maps.event.addListener(map, 'idle', () => debouncedRender()); // 드래그/줌 후 중심 변경 시 재계산
+        kakao.maps.event.addListener(map, 'idle', () => debouncedRender());
 
         const applyRatingUpdate = (update) => {
           if (!update || update.toiletId == null) return;
           const idx = indexById.get(update.toiletId);
           if (idx == null) return;
+
           const t = allToilets[idx];
           const nextAvg = Number(update.avgRating);
           const nextCnt = Number(update.reviewCount);
+
           t.avgRating = Number.isFinite(nextAvg) ? Math.max(0, Math.min(5, nextAvg)) : 0;
           t.reviewCount = Number.isFinite(nextCnt) && nextCnt > 0 ? Math.floor(nextCnt) : 0;
+
           if (openMarker && openMarker.__toiletId === update.toiletId && sharedInfoWindow) {
             const nextContentEl = buildInfoContentSafe(t);
             sharedInfoWindow.setContent(nextContentEl);
@@ -423,9 +473,7 @@
               console.warn('SSE parse error', err);
             }
           });
-          sse.onerror = () => {
-            // 브라우저가 자동 재연결을 시도한다.
-          };
+          sse.onerror = () => { /* auto reconnect */ };
         };
 
         const closeSse = () => {
@@ -443,36 +491,37 @@
 
         window.addEventListener('pagehide', closeSse);
         window.addEventListener('beforeunload', closeSse);
-        document.addEventListener('visibilitychange', () => {
-          if (document.hidden) closeSse();
-        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) closeSse(); });
+
         window.addEventListener('pagehide', stopGeoWatch);
         window.addEventListener('beforeunload', stopGeoWatch);
-        document.addEventListener('visibilitychange', () => {
-          if (document.hidden) stopGeoWatch();
-        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) stopGeoWatch(); });
 
-        // 한 번 호출로 평점 포함 데이터 로드
+        // 평점 포함 데이터 로드
         const fetchStart = perf && perf.now ? perf.now() : Date.now();
         fetch(/*[[@{/toilets}]]*/ + '?withRatings=true')
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(full => {
             if (!Array.isArray(full) || full.length === 0) {
-              setStatus('\uB370\uC774\uD130 0\uAC1C', 'warn');
+              setStatus('데이터 0개', 'warn');
               return;
             }
+
             allToilets = full;
             indexById = new Map();
             allToilets.forEach((t, i) => { if (t && t.id != null) indexById.set(t.id, i); });
+
             debouncedRender();
+
             const fetchEnd = perf && perf.now ? perf.now() : Date.now();
             console.log(`[fetch/toilets] items=${full.length} total=${(fetchEnd - fetchStart).toFixed(1)}ms`);
-            setStatus(`\uACF5\uACF5 \uD654\uC7A5\uC2E4 · ${full.length}\uAC1C (\uD3C9\uC810 \uD3EC\uD568)`, 'ok');
+
+            setStatus(`공공 화장실 · ${full.length}개 (평점 포함)`, 'ok');
             connectSse();
           })
           .catch(err => {
             console.error('데이터 로드 실패:', err);
-            setStatus('\uB370\uC774\uD130 \uB85C\uB4DC \uC2E4\uD328 · \uCF58\uC194 \uD655\uC778', 'warn');
+            setStatus('데이터 로드 실패 · 콘솔 확인', 'warn');
           });
       }
     });

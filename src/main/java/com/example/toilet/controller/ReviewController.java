@@ -112,11 +112,16 @@ public class ReviewController {
     }
 
     @GetMapping("/reviews")
-    public String reviews(@RequestParam("toiletId") Long toiletId, Model model) {
+    public String reviews(@RequestParam("toiletId") Long toiletId,
+                          @RequestParam(name = "skipViewCount", defaultValue = "false") boolean skipViewCount,
+                          Model model) {
         long startNanos = System.nanoTime();
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
+        long pageViewCount = skipViewCount
+                ? reviewService.getReviewPageViewCount(toiletId)
+                : reviewService.increaseReviewPageViewCount(toiletId);
 
         Object error = model.asMap().get("errorMessage");
         if (error != null) model.addAttribute("errorMessage", error.toString());
@@ -145,6 +150,7 @@ public class ReviewController {
         model.addAttribute("toilet", toilet);
         model.addAttribute("avgRating", avg);
         model.addAttribute("reviews", list);
+        model.addAttribute("pageViewCount", pageViewCount);
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
         log.info("마커→리뷰 이동 소요: {} ms (toiletId={}, 리뷰수={})",
@@ -160,15 +166,15 @@ public class ReviewController {
 
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
         if (hasBannedWord(form.getComment())) {
             redirectAttributes.addFlashAttribute("errorMessage", "금지어가 포함된 리뷰는 등록할 수 없습니다.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
         if (isRateLimited(clientKey(request))) {
             redirectAttributes.addFlashAttribute("errorMessage", "도배가 감지되었습니다. 잠시 후 다시 시도해주세요.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
 
         Toilet toilet = toiletService.findById(form.getToiletId())
@@ -181,7 +187,7 @@ public class ReviewController {
         reviewService.save(r);
 
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 등록되었습니다.");
-        return "redirect:/reviews?toiletId=" + form.getToiletId();
+        return reviewsRedirectUrlWithoutCount(form.getToiletId());
     }
 
     @PostMapping("/reviews/update")
@@ -191,20 +197,20 @@ public class ReviewController {
                          HttpServletRequest request) {
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
         if (hasBannedWord(form.getComment())) {
             redirectAttributes.addFlashAttribute("errorMessage", "금지어가 포함된 리뷰는 수정할 수 없습니다.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
         if (isRateLimited(clientKey(request))) {
             redirectAttributes.addFlashAttribute("errorMessage", "도배가 감지되었습니다. 잠시 후 다시 시도해주세요.");
-            return "redirect:/reviews?toiletId=" + form.getToiletId();
+            return reviewsRedirectUrlWithoutCount(form.getToiletId());
         }
 
         reviewService.update(form.getReviewId(), form.getRating(), form.getComment());
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 수정되었습니다.");
-        return "redirect:/reviews?toiletId=" + form.getToiletId();
+        return reviewsRedirectUrlWithoutCount(form.getToiletId());
     }
 
     @PostMapping("/reviews/delete")
@@ -213,7 +219,7 @@ public class ReviewController {
                          RedirectAttributes redirectAttributes) {
         reviewService.delete(reviewId);
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 삭제되었습니다.");
-        return "redirect:/reviews?toiletId=" + toiletId;
+        return reviewsRedirectUrlWithoutCount(toiletId);
     }
 
     @PostMapping("/reviews/report")
@@ -231,6 +237,10 @@ public class ReviewController {
             log.warn("리뷰 신고 실패 reviewId={}", reviewId, e);
             redirectAttributes.addFlashAttribute("errorMessage", "신고 처리 중 오류가 발생했습니다.");
         }
-        return "redirect:/reviews?toiletId=" + toiletId;
+        return reviewsRedirectUrlWithoutCount(toiletId);
+    }
+
+    private String reviewsRedirectUrlWithoutCount(Long toiletId) {
+        return "redirect:/reviews?toiletId=" + toiletId + "&skipViewCount=true";
     }
 }

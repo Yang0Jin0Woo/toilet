@@ -29,7 +29,7 @@ public class GlobalExceptionHandler {
     private String buildRetryUrl(HttpServletRequest request) {
         String toiletId = request.getParameter("toiletId");
         if (toiletId != null && !toiletId.isBlank()) {
-            return "/reviews?toiletId=" + toiletId;
+            return "/reviews?toiletId=" + toiletId + "&skipViewCount=true";
         }
 
         String referer = request.getHeader("Referer");

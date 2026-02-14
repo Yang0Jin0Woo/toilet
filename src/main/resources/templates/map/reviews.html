@@ -78,6 +78,10 @@
 
     </div>
 
+    <div class="meta" style="max-width: 860px; margin: 0 auto; text-align:right;">
+        조회 수 <span th:text="${pageViewCount}">0</span>
+    </div>
+
     <div class="meta">
         <span class="iw-stars"
               th:attr="aria-label=|평점 ${#numbers.formatDecimal(avgRating,1,1)}|">

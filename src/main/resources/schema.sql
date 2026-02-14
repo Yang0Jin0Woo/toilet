@@ -39,3 +39,14 @@ CREATE TABLE IF NOT EXISTS review (
 ) ENGINE=InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS review_page_view (
+    toilet_id  BIGINT NOT NULL PRIMARY KEY,
+    view_count BIGINT NOT NULL DEFAULT 0,
+
+    CONSTRAINT fk_review_page_view_toilet
+      FOREIGN KEY (toilet_id) REFERENCES toilet(id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_general_ci;

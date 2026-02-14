@@ -4,6 +4,7 @@ import com.example.toilet.domain.Review;
 import com.example.toilet.repository.ReviewRepository;
 import com.example.toilet.repository.ToiletRepository;
 import lombok.AllArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -104,6 +105,37 @@ public class ReviewService {
             return true;
         }
         return false;
+    }
+
+    @Transactional
+    public long increaseReviewPageViewCount(Long toiletId) {
+        if (toiletId == null) {
+            throw new IllegalArgumentException("toiletId is required");
+        }
+
+        // Intentionally no locking/version check to allow lost updates under concurrent requests.
+        Long current = toiletRepository.findReviewPageViewCount(toiletId);
+        long next = (current == null ? 0L : current) + 1L;
+
+        if (current == null) {
+            try {
+                toiletRepository.insertReviewPageViewCount(toiletId, next);
+            } catch (DataIntegrityViolationException e) {
+                toiletRepository.overwriteReviewPageViewCount(toiletId, next);
+            }
+            return next;
+        }
+
+        toiletRepository.overwriteReviewPageViewCount(toiletId, next);
+        return next;
+    }
+
+    public long getReviewPageViewCount(Long toiletId) {
+        if (toiletId == null) {
+            throw new IllegalArgumentException("toiletId is required");
+        }
+        Long current = toiletRepository.findReviewPageViewCount(toiletId);
+        return current == null ? 0L : current;
     }
 
     private void publishAfterCommit(Long toiletId) {

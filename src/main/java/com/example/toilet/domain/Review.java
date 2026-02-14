@@ -22,21 +22,23 @@ public class Review {
     private Toilet toilet;
 
     @Min(1) @Max(5)
+    @Column(nullable = false)
     private Integer rating;           // 1~5
     @Column(length = 1000)
     @Size(max = 1000)
     private String comment;
 
-    @Column(nullable = false, columnDefinition = "int default 0")
+    @Column(name = "report_count", nullable = false)
     private Integer reportCount = 0;
 
-    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Column(name = "blocked", nullable = false)
     private Boolean blocked = false;
 
     @Version
     @Column(nullable = false)
     private Long version;
 
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @PrePersist

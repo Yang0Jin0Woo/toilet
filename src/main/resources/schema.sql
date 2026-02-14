@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS review (
     toilet_id   BIGINT NOT NULL,
     rating      INT    NOT NULL,
     comment     VARCHAR(1000),
+    report_count INT   NOT NULL DEFAULT 0,
+    blocked     BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     version     BIGINT NOT NULL DEFAULT 0,
 

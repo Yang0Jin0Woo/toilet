@@ -16,12 +16,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.PostConstruct;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -57,17 +59,24 @@ public class ToiletService {
     @Value("${toilet.sync.url:}")
     private String syncUrl;
 
+    @Value("${toilet.init.fail-fast:true}")
+    private boolean initFailFast;
+
+    @Value("${toilet.sync.failure-alert-threshold:3}")
+    private int syncFailureAlertThreshold;
+
     private final AtomicBoolean syncRunning = new AtomicBoolean(false);
+    private final AtomicInteger consecutiveSyncFailures = new AtomicInteger(0);
 
     @PostConstruct
     public void init() {
+        if (listCacheTtlMs > 0 && listCacheTtlMs < MIN_LIST_TTL_MS) {
+            log.warn("list.cache.ttl-ms가 너무 작아 {}ms로 조정(현재 {}ms)", listCacheTtlMs, MIN_LIST_TTL_MS);
+            listCacheTtlMs = MIN_LIST_TTL_MS;
+        }
+        long existingCount = toiletRepository.count();
         try {
-            if (listCacheTtlMs > 0 && listCacheTtlMs < MIN_LIST_TTL_MS) {
-                log.warn("list.cache.ttl-ms too small; adjusted to {}ms (current {}ms)", listCacheTtlMs, MIN_LIST_TTL_MS);
-                listCacheTtlMs = MIN_LIST_TTL_MS;
-            }
             List<Toilet> initial = loadToiletsFromClasspath();
-            long existingCount = toiletRepository.count();
             if (existingCount >= initial.size()) {
                 return;
             }
@@ -75,7 +84,11 @@ public class ToiletService {
                 upsert(t);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            if (existingCount == 0 && initFailFast) {
+                log.error("초기 데이터 로딩 실패로 기동 중단. dataPath={}", toiletDataPath, e);
+                throw new IllegalStateException("필수 초기 데이터 로딩 실패", e);
+            }
+            log.error("초기 데이터 로딩 실패. 기존 데이터({})로 기동 계속. dataPath={}", existingCount, toiletDataPath, e);
         }
     }
 
@@ -146,7 +159,7 @@ public class ToiletService {
         if (!syncEnabled) return;
         if (syncUrl == null || syncUrl.isBlank()) return;
         if (!syncRunning.compareAndSet(false, true)) {
-            log.debug("toilet sync skipped: previous run still active");
+            log.debug("화장실 동기화를 건너뜁니다. 이전 동기화가 아직 실행 중.");
             return;
         }
         long start = System.nanoTime();
@@ -164,34 +177,40 @@ public class ToiletService {
             if (inserted + updated > 0) {
                 evictListCache();
             }
+            consecutiveSyncFailures.set(0);
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            log.info("toilet sync done: inserted={}, updated={}, skipped={}, total={}, {} ms",
+            log.info("화장실 동기화 완료: 삽입={}, 수정={}, 건너뜀={}, 전체={}, {} ms",
                     inserted, updated, skipped, incoming.size(), elapsedMs);
         } catch (Exception e) {
-            log.warn("toilet sync failed: {}", e.getMessage(), e);
+            int failureCount = consecutiveSyncFailures.incrementAndGet();
+            if (failureCount >= Math.max(1, syncFailureAlertThreshold)) {
+                log.error("화장실 동기화 연속 실패 {}회. 캐시/기존 데이터는 유지. 원인: {}", failureCount, e.getMessage(), e);
+            } else {
+                log.warn("화장실 동기화 실패({}회 연속). 캐시/기존 데이터는 유지. 원인: {}", failureCount, e.getMessage(), e);
+            }
         } finally {
             syncRunning.set(false);
         }
     }
 
     private List<Toilet> loadToiletsFromClasspath() throws Exception {
-        InputStream inputStream =
-                new ClassPathResource(toiletDataPath.substring("classpath:".length())).getInputStream();
-        return parseToilets(inputStream);
+        try (InputStream inputStream =
+                     new ClassPathResource(toiletDataPath.substring("classpath:".length())).getInputStream()) {
+            return parseToilets(inputStream);
+        }
     }
 
     private List<Toilet> fetchToiletsFromUrl(String url) throws Exception {
         RestTemplate restTemplate = new RestTemplate();
-        InputStream inputStream = restTemplate.execute(
-                URI.create(url),
-                org.springframework.http.HttpMethod.GET,
-                null,
-                response -> response.getBody()
-        );
-        if (inputStream == null) {
-            throw new IllegalStateException("empty response body");
+        org.springframework.http.ResponseEntity<byte[]> response =
+                restTemplate.getForEntity(URI.create(url), byte[].class);
+        byte[] body = response.getBody();
+        if (body == null || body.length == 0) {
+            throw new IllegalStateException("동기화 URL 응답 본문이 비어 있음.");
         }
-        return parseToilets(inputStream);
+        try (InputStream inputStream = new ByteArrayInputStream(body)) {
+            return parseToilets(inputStream);
+        }
     }
 
     private List<Toilet> parseToilets(InputStream inputStream) throws Exception {
@@ -229,7 +248,7 @@ public class ToiletService {
                         incoming.setExternalId(externalId);
                         return incoming;
                     } catch (Exception e) {
-                        log.debug("Skipped item due to parse error: {}", item, e);
+                        log.debug("파싱 오류로 항목 건너뜀: {}", item, e);
                         return null;
                     }
                 })

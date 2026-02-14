@@ -9,13 +9,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(properties = {
         "rating.cache.enabled=false",
@@ -30,7 +38,7 @@ import java.util.List;
 @Import(SlowQueryTestConfig.class)
 @Slf4j
 class DtoProjectionComparisonTest {
-    private static final int RUNS = 30;
+    private static final int RUNS = 100;
     private static final int RATING_SAMPLE = 4557;
 
     @Autowired
@@ -45,15 +53,64 @@ class DtoProjectionComparisonTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void compareEntityVsProjection() throws Exception {
+    void compareEntityVsProjectionRegression() throws Exception {
+        List<Toilet> toilets = toiletRepository.findAll();
+        assertFalse(toilets.isEmpty(), "회귀 테스트를 위한 화장실 데이터가 비어 있습니다.");
+
+        List<ToiletSnapshot> snapshots = fetchSnapshots();
+        assertEquals(toilets.size(), snapshots.size(), "엔티티/프로젝션 목록 개수가 다릅니다.");
+
+        Map<Long, Toilet> toiletsById = new HashMap<>(toilets.size());
+        for (Toilet toilet : toilets) {
+            toiletsById.put(toilet.getId(), toilet);
+        }
+        for (ToiletSnapshot snapshot : snapshots) {
+            Toilet entity = toiletsById.get(snapshot.id());
+            assertNotNull(entity, "프로젝션에만 존재하는 ID가 있습니다: " + snapshot.id());
+            assertEquals(entity.getContsName(), snapshot.contsName());
+            assertEquals(entity.getAddrNew(), snapshot.addrNew());
+            assertEquals(entity.getAddrOld(), snapshot.addrOld());
+            assertEquals(entity.getCoordX(), snapshot.coordX());
+            assertEquals(entity.getCoordY(), snapshot.coordY());
+            assertEquals(entity.getValue04(), snapshot.value04());
+            assertEquals(entity.getValue05(), snapshot.value05());
+            assertEquals(entity.getRatingSum(), snapshot.ratingSum());
+            assertEquals(entity.getRatingCount(), snapshot.ratingCount());
+        }
+
+        List<Long> toiletIds = toilets.stream().map(Toilet::getId).limit(RATING_SAMPLE).toList();
+        Map<Long, RatingTotal> entityAgg = aggregateRatingsByEntity(toiletIds);
+        Map<Long, RatingTotal> projectionAgg = aggregateRatingsByProjection(toiletIds);
+        assertEquals(entityAgg.keySet(), projectionAgg.keySet(), "평점 집계 대상 화장실 ID 집합이 다릅니다.");
+
+        for (Long toiletId : entityAgg.keySet()) {
+            RatingTotal entity = entityAgg.get(toiletId);
+            RatingTotal projection = projectionAgg.get(toiletId);
+            assertNotNull(projection, "프로젝션 집계 누락 ID: " + toiletId);
+            assertEquals(entity.cnt, projection.cnt, "리뷰 개수가 다릅니다. toiletId=" + toiletId);
+            assertTrue(Math.abs(entity.avg - projection.avg) < 0.000_001, "평균 평점이 다릅니다. toiletId=" + toiletId);
+        }
+
+        Metric listEntity = measureListEntity();
+        Metric listProjection = measureListProjection();
+        assertEquals(listEntity.rowCount, listProjection.rowCount, "목록 행 개수가 다릅니다.");
+        assertEquals(1L, listEntity.sqlCount, "엔티티 목록 조회 SQL 수가 예상과 다릅니다.");
+        assertEquals(1L, listProjection.sqlCount, "프로젝션 목록 조회 SQL 수가 예상과 다릅니다.");
+
+        Metric ratingEntity = measureRatingEntity(toiletIds);
+        Metric ratingProjection = measureRatingProjection(toiletIds);
+        assertEquals(1L, ratingEntity.sqlCount, "엔티티 평점 조회 SQL 수가 예상과 다릅니다.");
+        assertEquals(1L, ratingProjection.sqlCount, "프로젝션 평점 조회 SQL 수가 예상과 다릅니다.");
+    }
+
+    @Test
+    @Tag("perf")
+    void compareEntityVsProjectionPerf() throws Exception {
         List<Long> toiletIds = toiletRepository.findAll().stream()
                 .map(Toilet::getId)
                 .limit(RATING_SAMPLE)
                 .toList();
-        if (toiletIds.isEmpty()) {
-            log.warn("No toilets found; skipping comparison test.");
-            return;
-        }
+        assertFalse(toiletIds.isEmpty(), "성능 비교를 위한 화장실 데이터가 비어 있습니다.");
 
         long[] listEntityTotalMs = new long[RUNS];
         long[] listEntityPayloadBytes = new long[RUNS];
@@ -157,20 +214,7 @@ class DtoProjectionComparisonTest {
         SlowQueryTestConfig.resetSqlCounters();
 
         long start = System.nanoTime();
-        List<ToiletSnapshot> snapshots = toiletRepository.findAllSnapshots().stream()
-                .map(p -> new ToiletSnapshot(
-                        p.getId(),
-                        p.getContsName(),
-                        p.getAddrNew(),
-                        p.getAddrOld(),
-                        p.getCoordX(),
-                        p.getCoordY(),
-                        p.getValue04(),
-                        p.getValue05(),
-                        p.getRatingSum(),
-                        p.getRatingCount()
-                ))
-                .toList();
+        List<ToiletSnapshot> snapshots = fetchSnapshots();
         long totalMs = nanosToMs(System.nanoTime() - start);
 
         long afterMem = usedMemory();
@@ -255,6 +299,59 @@ class DtoProjectionComparisonTest {
         );
     }
 
+    private List<ToiletSnapshot> fetchSnapshots() {
+        return toiletRepository.findAllSnapshots().stream()
+                .map(p -> new ToiletSnapshot(
+                        p.getId(),
+                        p.getContsName(),
+                        p.getAddrNew(),
+                        p.getAddrOld(),
+                        p.getCoordX(),
+                        p.getCoordY(),
+                        p.getValue04(),
+                        p.getValue05(),
+                        p.getRatingSum(),
+                        p.getRatingCount()
+                ))
+                .toList();
+    }
+
+    private Map<Long, RatingTotal> aggregateRatingsByEntity(List<Long> ids) {
+        List<Review> reviews = entityManager.createQuery(
+                        "select r from Review r join fetch r.toilet t " +
+                                "where t.id in :ids " +
+                                "and (r.blocked = false or r.blocked is null)",
+                        Review.class)
+                .setParameter("ids", ids)
+                .getResultList();
+        Map<Long, RatingTotal> result = new HashMap<>();
+        for (Review review : reviews) {
+            Long toiletId = review.getToilet() == null ? null : review.getToilet().getId();
+            if (toiletId == null) {
+                continue;
+            }
+            RatingTotal prev = result.get(toiletId);
+            long prevCnt = prev == null ? 0L : prev.cnt;
+            double prevAvg = prev == null ? 0.0 : prev.avg;
+            int rating = review.getRating() == null ? 0 : review.getRating();
+            long nextCnt = prevCnt + 1;
+            double nextAvg = ((prevAvg * prevCnt) + rating) / (double) nextCnt;
+            result.put(toiletId, new RatingTotal(nextAvg, nextCnt));
+        }
+        return result;
+    }
+
+    private Map<Long, RatingTotal> aggregateRatingsByProjection(List<Long> ids) {
+        List<ReviewRepository.ToiletRatingAgg> aggs = reviewRepository.aggregateByToiletIds(ids);
+        Map<Long, RatingTotal> result = new HashMap<>(aggs.size());
+        for (ReviewRepository.ToiletRatingAgg agg : aggs) {
+            double avg = agg.getAvg() == null ? 0.0 : agg.getAvg();
+            long cnt = agg.getCnt() == null ? 0L : agg.getCnt();
+            result.put(agg.getToiletId(), new RatingTotal(avg, cnt));
+        }
+        return result;
+    }
+
     private void logSummary(String label,
                             long[] totalMs,
                             long[] payloadBytes,
@@ -270,14 +367,14 @@ class DtoProjectionComparisonTest {
         long sqlCountPerReq = perRequestValue(sqlCounts);
         long rowCountPerReq = perRequestValue(rows);
 
-        log.info("PROJECTION_COMPARE ({}, totalMs avg|min~p95={}~{}~{} | payloadBytes avg|min~p95={}~{}~{} | memBytes avg|min~p95={}~{}~{} | rows={} | sqlCount={} | sqlMs avg|min~p95={}~{}~{})",
+        log.info("PROJECTION_COMPARE ({}, totalMs min~p95(avg)={}~{}({}) | payloadBytes min~p95(avg)={}~{}({}) | memBytes min~p95(avg)={}~{}({}) | rows={} | sqlCount={} | sqlMs min~p95(avg)={}~{}({}))",
                 label,
-                totalStats.avg, totalStats.min, totalStats.p95,
-                payloadStats.avg, payloadStats.min, payloadStats.p95,
-                memStats.avg, memStats.min, memStats.p95,
+                totalStats.min, totalStats.p95, totalStats.avg,
+                payloadStats.min, payloadStats.p95, payloadStats.avg,
+                memStats.min, memStats.p95, memStats.avg,
                 rowCountPerReq,
                 sqlCountPerReq,
-                sqlMsStats.avg, sqlMsStats.min, sqlMsStats.p95);
+                sqlMsStats.min, sqlMsStats.p95, sqlMsStats.avg);
     }
 
     private Stats stats(long[] values) {
@@ -342,5 +439,8 @@ class DtoProjectionComparisonTest {
     }
 
     private record RatingAggView(Long toiletId, double avg, long cnt) {
+    }
+
+    private record RatingTotal(double avg, long cnt) {
     }
 }

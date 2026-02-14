@@ -498,8 +498,9 @@
         document.addEventListener('visibilitychange', () => { if (document.hidden) stopGeoWatch(); });
 
         // 평점 포함 데이터 로드
+        const toiletsApiUrl = /*[[@{/toilets(withRatings=true)}]]*/ '/toilets?withRatings=true';
         const fetchStart = perf && perf.now ? perf.now() : Date.now();
-        fetch(/*[[@{/toilets}]]*/ + '?withRatings=true')
+        fetch(toiletsApiUrl)
           .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
           .then(full => {
             if (!Array.isArray(full) || full.length === 0) {

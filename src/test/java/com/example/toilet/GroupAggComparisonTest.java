@@ -1,14 +1,21 @@
 package com.example.toilet;
 
-import com.example.toilet.service.ToiletService;
+import com.example.toilet.domain.Review;
+import com.example.toilet.domain.Toilet;
+import com.example.toilet.repository.ReviewRepository;
+import com.example.toilet.repository.ToiletRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @SpringBootTest(properties = {
         "rating.cache.enabled=false",
@@ -24,12 +31,28 @@ import java.util.Arrays;
 @Slf4j
 class GroupAggComparisonTest {
     private static final int RUNS = 100;
+    private static final int TOILET_SAMPLE_SIZE = 4624;
 
     @Autowired
-    private ToiletService toiletService;
+    private ToiletRepository toiletRepository;
+
+    @Autowired
+    private ReviewRepository reviewRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Test
     void compareGroupAggregation() {
+        List<Long> toiletIds = toiletRepository.findAll().stream()
+                .map(Toilet::getId)
+                .limit(TOILET_SAMPLE_SIZE)
+                .toList();
+        if (toiletIds.isEmpty()) {
+            log.warn("No toilets found; skipping aggregation comparison.");
+            return;
+        }
+
         long[] perListCounts = new long[RUNS];
         long[] perAggCounts = new long[RUNS];
         long[] perAggMs = new long[RUNS];
@@ -40,33 +63,55 @@ class GroupAggComparisonTest {
         long[] groupAggMs = new long[RUNS];
         long[] groupTotalMs = new long[RUNS];
 
+        long[] fetchListCounts = new long[RUNS];
+        long[] fetchAggCounts = new long[RUNS];
+        long[] fetchAggMs = new long[RUNS];
+        long[] fetchTotalMs = new long[RUNS];
+
         for (int i = 0; i < RUNS; i++) {
-            Timing per = measureOnce("per_toilet");
+            Timing per = measurePerToilet(toiletIds);
             perListCounts[i] = per.listCount;
             perAggCounts[i] = per.ratingAggCount;
             perAggMs[i] = per.aggMs;
             perTotalMs[i] = per.totalMs;
 
-            Timing group = measureOnce("group");
+            Timing group = measureGroupBy(toiletIds);
             groupListCounts[i] = group.listCount;
             groupAggCounts[i] = group.ratingAggCount;
             groupAggMs[i] = group.aggMs;
             groupTotalMs[i] = group.totalMs;
+
+            Timing fetchJoin = measureFetchJoin(toiletIds);
+            fetchListCounts[i] = fetchJoin.listCount;
+            fetchAggCounts[i] = fetchJoin.ratingAggCount;
+            fetchAggMs[i] = fetchJoin.aggMs;
+            fetchTotalMs[i] = fetchJoin.totalMs;
         }
 
+        log.info("GROUP_COMPARE_CONFIG runs={} sampleToilets={}", RUNS, toiletIds.size());
         logSummary("PER_TOILET", perListCounts, perAggCounts, perAggMs, perTotalMs);
-        logSummary("GROUP", groupListCounts, groupAggCounts, groupAggMs, groupTotalMs);
+        logSummary("GROUP_BY", groupListCounts, groupAggCounts, groupAggMs, groupTotalMs);
+        logSummary("FETCH_JOIN", fetchListCounts, fetchAggCounts, fetchAggMs, fetchTotalMs);
     }
 
-    private Timing measureOnce(String mode) {
-        configure(mode);
+    private Timing measurePerToilet(List<Long> toiletIds) {
+        entityManager.clear();
         SlowQueryTestConfig.resetSqlCounters();
 
         long start = System.nanoTime();
-        toiletService.getAllToiletViews(true);
+        long aggStart = System.nanoTime();
+        Map<Long, RatingTotal> aggByToilet = new HashMap<>(toiletIds.size());
+        for (Long toiletId : toiletIds) {
+            ReviewRepository.SingleRatingTotalAgg agg = reviewRepository.aggregateTotalsByToiletId(toiletId);
+            long sum = agg == null || agg.getSum() == null ? 0L : agg.getSum();
+            long cnt = agg == null || agg.getCnt() == null ? 0L : agg.getCnt();
+            aggByToilet.put(toiletId, new RatingTotal(sum, cnt));
+        }
+        if (aggByToilet.size() != toiletIds.size()) {
+            throw new IllegalStateException("per_toilet aggregation result mismatch");
+        }
+        long aggMsValue = (System.nanoTime() - aggStart) / 1_000_000;
         long totalMs = (System.nanoTime() - start) / 1_000_000;
-        Long aggMs = toiletService.consumeLastAggMs();
-        long aggMsValue = aggMs == null ? -1 : aggMs;
 
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
@@ -74,9 +119,60 @@ class GroupAggComparisonTest {
         return new Timing(totalMs, aggMsValue, listCount, ratingAggCount);
     }
 
-    private void configure(String mode) {
-        ReflectionTestUtils.setField(toiletService, "listCacheEnabled", false);
-        ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", mode);
+    private Timing measureGroupBy(List<Long> toiletIds) {
+        entityManager.clear();
+        SlowQueryTestConfig.resetSqlCounters();
+
+        long start = System.nanoTime();
+        long aggStart = System.nanoTime();
+        List<ReviewRepository.ToiletRatingAgg> aggs = reviewRepository.aggregateByToiletIds(toiletIds);
+        Map<Long, RatingTotal> aggByToilet = new HashMap<>(aggs.size());
+        for (ReviewRepository.ToiletRatingAgg agg : aggs) {
+            long sum = 0L;
+            long cnt = agg.getCnt() == null ? 0L : agg.getCnt();
+            if (agg.getAvg() != null && cnt > 0L) {
+                sum = Math.round(agg.getAvg() * (double) cnt);
+            }
+            aggByToilet.put(agg.getToiletId(), new RatingTotal(sum, cnt));
+        }
+        long aggMsValue = (System.nanoTime() - aggStart) / 1_000_000;
+        long totalMs = (System.nanoTime() - start) / 1_000_000;
+
+        long listCount = SlowQueryTestConfig.getSqlToiletListCount();
+        long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
+        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount);
+    }
+
+    private Timing measureFetchJoin(List<Long> toiletIds) {
+        entityManager.clear();
+        SlowQueryTestConfig.resetSqlCounters();
+
+        long start = System.nanoTime();
+        long aggStart = System.nanoTime();
+        List<Review> reviews = entityManager.createQuery(
+                        "select r from Review r join fetch r.toilet t " +
+                                "where t.id in :ids and (r.blocked = false or r.blocked is null)",
+                        Review.class)
+                .setParameter("ids", toiletIds)
+                .getResultList();
+        Map<Long, RatingTotal> aggByToilet = new HashMap<>();
+        for (Review review : reviews) {
+            Long toiletId = review.getToilet() == null ? null : review.getToilet().getId();
+            if (toiletId == null) {
+                continue;
+            }
+            RatingTotal prev = aggByToilet.get(toiletId);
+            long prevSum = prev == null ? 0L : prev.sum;
+            long prevCnt = prev == null ? 0L : prev.cnt;
+            int rating = review.getRating() == null ? 0 : review.getRating();
+            aggByToilet.put(toiletId, new RatingTotal(prevSum + rating, prevCnt + 1L));
+        }
+        long aggMsValue = (System.nanoTime() - aggStart) / 1_000_000;
+        long totalMs = (System.nanoTime() - start) / 1_000_000;
+
+        long listCount = SlowQueryTestConfig.getSqlToiletListCount();
+        long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
+        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount);
     }
 
     private void logSummary(String label,
@@ -143,6 +239,9 @@ class GroupAggComparisonTest {
             this.listCount = listCount;
             this.ratingAggCount = ratingAggCount;
         }
+    }
+
+    private record RatingTotal(long sum, long cnt) {
     }
 
     private static final class Stats {

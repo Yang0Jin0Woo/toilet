@@ -85,19 +85,10 @@ public interface ToiletRepository extends JpaRepository<Toilet, Long> {
     @Modifying
     @Query(value = """
            insert into review_page_view (toilet_id, view_count)
-           values (:toiletId, :viewCount)
+           values (:toiletId, 1)
+           on duplicate key update view_count = view_count + 1
            """, nativeQuery = true)
-    int insertReviewPageViewCount(@Param("toiletId") Long toiletId,
-                                  @Param("viewCount") long viewCount);
-
-    @Modifying
-    @Query(value = """
-           update review_page_view
-           set view_count = :viewCount
-           where toilet_id = :toiletId
-           """, nativeQuery = true)
-    int overwriteReviewPageViewCount(@Param("toiletId") Long toiletId,
-                                     @Param("viewCount") long viewCount);
+    int incrementReviewPageViewCount(@Param("toiletId") Long toiletId);
 }
 
 

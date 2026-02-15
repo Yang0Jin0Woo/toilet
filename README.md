@@ -173,6 +173,10 @@ src
 
 
 - 동시성 제어
+  - 조회 수 증가 로직 개선(문제 -> 해결 -> 결과)
+    - 문제: `review_page_view`를 `select 후 +1 계산 -> update` 방식으로 처리해 동시 요청 시 유실 업데이트가 발생하고, 100명 동시 조회에서도 최종 조회 수가 100보다 작아질 수 있었음
+    - 해결: `@Modifying` + native query로 `insert ... on duplicate key update view_count = view_count + 1` 원자 업데이트를 적용해 DB 단에서 증가 연산을 직렬화
+    - 결과: 조회 수 동시성 테스트(`ReviewPageViewConcurrencyTest`)에서 100명 동시 조회 시 최종 조회 수 100을 안정적으로 만족
   - 리뷰 `create/update/delete/report`에 `synchronized` 적용(단일 인스턴스 락)
     - 저장/수정/삭제/신고가 읽기-수정-저장으로 이어져 경쟁 시 정합성 문제가 생길 수 있어 단일 인스턴스에서 직렬화
     - 멀티 인스턴스 환경에서는 DB 락(낙관적/비관적) 또는 Redis 분산 락으로 보완 필요

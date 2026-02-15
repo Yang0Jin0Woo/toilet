@@ -41,8 +41,10 @@ import java.util.stream.Collectors;
 @Slf4j
 @Validated
 public class ReviewController {
-    private static final int VIEW_COUNT_WINDOW_SECONDS = 600;
+    private static final int VIEW_COUNT_WINDOW_SECONDS = 180;
     private static final String VIEW_COUNT_COOKIE_PREFIX = "review_viewed_";
+    private static final int VIEW_RATE_LIMIT = 30;
+    private static final long VIEW_RATE_LIMIT_WINDOW_MS = 60_000L;
 
     public static class ReviewForm {
         @NotNull
@@ -81,6 +83,10 @@ public class ReviewController {
             .expireAfterAccess(Duration.ofMinutes(20))
             .maximumSize(200_000)
             .build();
+    private final Cache<String, Deque<Long>> viewRateLimitBuckets = Caffeine.newBuilder()
+            .expireAfterAccess(Duration.ofMinutes(20))
+            .maximumSize(200_000)
+            .build();
 
     private boolean hasBannedWord(String text) {
         if (text == null || text.isBlank()) return false;
@@ -115,6 +121,21 @@ public class ReviewController {
         }
     }
 
+    private boolean isViewRateLimited(String key) {
+        long now = System.currentTimeMillis();
+        Deque<Long> deque = viewRateLimitBuckets.get(key, k -> new ArrayDeque<>());
+        synchronized (deque) {
+            while (!deque.isEmpty() && now - deque.peekFirst() > VIEW_RATE_LIMIT_WINDOW_MS) {
+                deque.pollFirst();
+            }
+            if (deque.size() >= VIEW_RATE_LIMIT) {
+                return true;
+            }
+            deque.addLast(now);
+            return false;
+        }
+    }
+
     @GetMapping("/reviews")
     public String reviews(@RequestParam("toiletId") Long toiletId,
                           @RequestParam(name = "skipViewCount", defaultValue = "false") boolean skipViewCount,
@@ -125,7 +146,9 @@ public class ReviewController {
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
-        boolean shouldIncreaseViewCount = !skipViewCount && !hasRecentViewCookie(request, toiletId);
+        boolean shouldIncreaseViewCount = !skipViewCount
+                && !hasRecentViewCookie(request, toiletId)
+                && !isViewRateLimited(clientKey(request));
         long pageViewCount = shouldIncreaseViewCount
                 ? reviewService.increaseReviewPageViewCount(toiletId)
                 : reviewService.getReviewPageViewCount(toiletId);

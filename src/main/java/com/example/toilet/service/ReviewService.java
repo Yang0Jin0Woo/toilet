@@ -18,7 +18,7 @@ import java.util.Set;
 @AllArgsConstructor
 @Transactional(readOnly = true)
 public class ReviewService {
-    private static final Object SSE_TX_RESOURCE_KEY = new Object();
+    private static final Object TX_AFTER_COMMIT_RESOURCE_KEY = new Object();
 
     private final ReviewRepository reviewRepository;
     private final ToiletRepository toiletRepository;
@@ -48,8 +48,7 @@ public class ReviewService {
         Long toiletId = r.getToilet().getId();
         Review saved = reviewRepository.save(r);
         recalculateToiletAggregate(toiletId);
-        toiletService.evictListCache();
-        publishAfterCommit(toiletId);
+        runAfterCommit(toiletId, true);
         return saved;
     }
 
@@ -66,8 +65,7 @@ public class ReviewService {
         review.setComment(newComment);
         Review saved = reviewRepository.save(review);
         recalculateToiletAggregate(toiletId);
-        toiletService.evictListCache();
-        publishAfterCommit(toiletId);
+        runAfterCommit(toiletId, true);
         return saved;
     }
 
@@ -81,8 +79,7 @@ public class ReviewService {
         }
         reviewRepository.delete(review);
         recalculateToiletAggregate(toiletId);
-        toiletService.evictListCache();
-        publishAfterCommit(toiletId);
+        runAfterCommit(toiletId, true);
     }
 
     @Transactional
@@ -100,8 +97,7 @@ public class ReviewService {
         int deleted = reviewRepository.deleteIfReportCountGte(reviewId, blockThreshold);
         if (deleted > 0) {
             recalculateToiletAggregate(toiletId);
-            toiletService.evictListCache();
-            publishAfterCommit(toiletId);
+            runAfterCommit(toiletId, true);
             return true;
         }
         return false;
@@ -138,34 +134,48 @@ public class ReviewService {
         return current == null ? 0L : current;
     }
 
-    private void publishAfterCommit(Long toiletId) {
+    private void runAfterCommit(Long toiletId, boolean evictListCache) {
         if (toiletId == null) return;
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+        boolean txActive = TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive();
+        if (!txActive) {
+            if (evictListCache) {
+                toiletService.evictListCache();
+            }
             ratingSseService.publishRatingUpdateAsync(toiletId);
             return;
         }
-        @SuppressWarnings("unchecked")
-        Set<Long> pendingToiletIds = (Set<Long>) TransactionSynchronizationManager.getResource(SSE_TX_RESOURCE_KEY);
-        if (pendingToiletIds == null) {
-            pendingToiletIds = new LinkedHashSet<>();
-            TransactionSynchronizationManager.bindResource(SSE_TX_RESOURCE_KEY, pendingToiletIds);
-            Set<Long> idsForTx = pendingToiletIds;
+
+        TxAfterCommitActions actions =
+                (TxAfterCommitActions) TransactionSynchronizationManager.getResource(TX_AFTER_COMMIT_RESOURCE_KEY);
+        if (actions == null) {
+            actions = new TxAfterCommitActions();
+            TransactionSynchronizationManager.bindResource(TX_AFTER_COMMIT_RESOURCE_KEY, actions);
+            TxAfterCommitActions actionsForTx = actions;
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
+                public void afterCommit() {
+                    if (actionsForTx.evictListCache) {
+                        toiletService.evictListCache();
+                    }
+                    for (Long id : actionsForTx.pendingToiletIds) {
+                        ratingSseService.publishRatingUpdateAsync(id);
+                    }
+                }
+
+                @Override
                 public void afterCompletion(int status) {
-                    try {
-                        if (status == TransactionSynchronization.STATUS_COMMITTED) {
-                            for (Long id : idsForTx) {
-                                ratingSseService.publishRatingUpdateAsync(id);
-                            }
-                        }
-                    } finally {
-                        TransactionSynchronizationManager.unbindResource(SSE_TX_RESOURCE_KEY);
+                    if (TransactionSynchronizationManager.hasResource(TX_AFTER_COMMIT_RESOURCE_KEY)) {
+                        TransactionSynchronizationManager.unbindResource(TX_AFTER_COMMIT_RESOURCE_KEY);
                     }
                 }
             });
         }
-        pendingToiletIds.add(toiletId);
+
+        actions.pendingToiletIds.add(toiletId);
+        if (evictListCache) {
+            actions.evictListCache = true;
+        }
     }
 
     private void recalculateToiletAggregate(Long toiletId) {
@@ -179,5 +189,10 @@ public class ReviewService {
         if (updated == 0) {
             throw new IllegalStateException("Failed to overwrite toilet rating aggregate: " + toiletId);
         }
+    }
+
+    private static final class TxAfterCommitActions {
+        private final Set<Long> pendingToiletIds = new LinkedHashSet<>();
+        private boolean evictListCache;
     }
 }

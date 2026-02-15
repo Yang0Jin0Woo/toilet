@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 @Validated
 public class ReviewController {
     private static final String SKIP_VIEW_COUNT_ONCE = "skipViewCountOnce";
-    private static final int VIEW_COUNT_WINDOW_SECONDS = 180;
+    private static final int VIEW_COUNT_WINDOW_SECONDS = 60;
     private static final long VIEW_COUNT_WINDOW_MS = VIEW_COUNT_WINDOW_SECONDS * 1000L;
     private static final int VIEW_HISTORY_COOKIE_TTL_SECONDS = 600;
     private static final String VIEW_HISTORY_COOKIE_NAME = "review_view_history";

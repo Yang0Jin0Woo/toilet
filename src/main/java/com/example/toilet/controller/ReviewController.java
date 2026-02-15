@@ -45,8 +45,10 @@ public class ReviewController {
     private static final String SKIP_VIEW_COUNT_ONCE = "skipViewCountOnce";
     private static final int VIEW_COUNT_WINDOW_SECONDS = 180;
     private static final long VIEW_COUNT_WINDOW_MS = VIEW_COUNT_WINDOW_SECONDS * 1000L;
+    private static final int VIEW_HISTORY_COOKIE_TTL_SECONDS = 600;
     private static final String VIEW_HISTORY_COOKIE_NAME = "review_view_history";
     private static final int VIEW_HISTORY_MAX_ENTRIES = 40;
+    private static final int VIEW_HISTORY_COOKIE_MAX_CHARS = 2000;
     private static final int VIEW_RATE_LIMIT = 30;
     private static final long VIEW_RATE_LIMIT_WINDOW_MS = 60_000L;
 
@@ -153,7 +155,9 @@ public class ReviewController {
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
-        boolean skipViewCount = Boolean.TRUE.equals(model.asMap().get(SKIP_VIEW_COUNT_ONCE));
+        // FlashAttribute -> ModelAttribute로 1회 바인딩되는 스킵 플래그 사용
+        Object skipOnce = request.getAttribute(SKIP_VIEW_COUNT_ONCE);
+        boolean skipViewCount = (skipOnce instanceof Boolean) && (Boolean) skipOnce;
         boolean shouldIncreaseViewCount = !skipViewCount
                 && !hasRecentViewCookie(request, toiletId)
                 && !isViewRateLimited(clientKey(request), toiletId);
@@ -313,12 +317,16 @@ public class ReviewController {
             value.append(e.getKey()).append('.').append(e.getValue());
             count++;
         }
+        if (value.length() > VIEW_HISTORY_COOKIE_MAX_CHARS) {
+            value.setLength(0);
+            value.append(toiletId).append('.').append(now);
+        }
 
         Cookie cookie = new Cookie(VIEW_HISTORY_COOKIE_NAME, value.toString());
         cookie.setHttpOnly(true);
         cookie.setSecure(secure);
         cookie.setPath("/");
-        cookie.setMaxAge(VIEW_COUNT_WINDOW_SECONDS);
+        cookie.setMaxAge(VIEW_HISTORY_COOKIE_TTL_SECONDS);
         response.addCookie(cookie);
     }
 

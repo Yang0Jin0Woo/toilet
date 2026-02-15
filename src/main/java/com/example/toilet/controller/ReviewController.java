@@ -29,6 +29,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -41,8 +42,11 @@ import java.util.stream.Collectors;
 @Slf4j
 @Validated
 public class ReviewController {
+    private static final String SKIP_VIEW_COUNT_ONCE = "skipViewCountOnce";
     private static final int VIEW_COUNT_WINDOW_SECONDS = 180;
-    private static final String VIEW_COUNT_COOKIE_PREFIX = "review_viewed_";
+    private static final long VIEW_COUNT_WINDOW_MS = VIEW_COUNT_WINDOW_SECONDS * 1000L;
+    private static final String VIEW_HISTORY_COOKIE_NAME = "review_view_history";
+    private static final int VIEW_HISTORY_MAX_ENTRIES = 40;
     private static final int VIEW_RATE_LIMIT = 30;
     private static final long VIEW_RATE_LIMIT_WINDOW_MS = 60_000L;
 
@@ -121,7 +125,11 @@ public class ReviewController {
         }
     }
 
-    private boolean isViewRateLimited(String key) {
+    private boolean isViewRateLimited(String clientKey, Long toiletId) {
+        if (toiletId == null) {
+            return false;
+        }
+        String key = clientKey + "|" + toiletId;
         long now = System.currentTimeMillis();
         Deque<Long> deque = viewRateLimitBuckets.get(key, k -> new ArrayDeque<>());
         synchronized (deque) {
@@ -138,7 +146,6 @@ public class ReviewController {
 
     @GetMapping("/reviews")
     public String reviews(@RequestParam("toiletId") Long toiletId,
-                          @RequestParam(name = "skipViewCount", defaultValue = "false") boolean skipViewCount,
                           HttpServletRequest request,
                           HttpServletResponse response,
                           Model model) {
@@ -146,14 +153,15 @@ public class ReviewController {
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
+        boolean skipViewCount = Boolean.TRUE.equals(model.asMap().get(SKIP_VIEW_COUNT_ONCE));
         boolean shouldIncreaseViewCount = !skipViewCount
                 && !hasRecentViewCookie(request, toiletId)
-                && !isViewRateLimited(clientKey(request));
+                && !isViewRateLimited(clientKey(request), toiletId);
         long pageViewCount = shouldIncreaseViewCount
                 ? reviewService.increaseReviewPageViewCount(toiletId)
                 : reviewService.getReviewPageViewCount(toiletId);
         if (shouldIncreaseViewCount) {
-            addRecentViewCookie(response, toiletId, request.isSecure());
+            addRecentViewCookie(request, response, toiletId, request.isSecure());
         }
 
         Object error = model.asMap().get("errorMessage");
@@ -199,15 +207,15 @@ public class ReviewController {
 
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
         if (hasBannedWord(form.getComment())) {
             redirectAttributes.addFlashAttribute("errorMessage", "금지어가 포함된 리뷰는 등록할 수 없습니다.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
         if (isRateLimited(clientKey(request))) {
             redirectAttributes.addFlashAttribute("errorMessage", "도배가 감지되었습니다. 잠시 후 다시 시도해주세요.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
 
         Toilet toilet = toiletService.findById(form.getToiletId())
@@ -220,7 +228,7 @@ public class ReviewController {
         reviewService.save(r);
 
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 등록되었습니다.");
-        return reviewsRedirectUrlWithoutCount(form.getToiletId());
+        return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
     }
 
     @PostMapping("/reviews/update")
@@ -230,20 +238,20 @@ public class ReviewController {
                          HttpServletRequest request) {
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
         if (hasBannedWord(form.getComment())) {
             redirectAttributes.addFlashAttribute("errorMessage", "금지어가 포함된 리뷰는 수정할 수 없습니다.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
         if (isRateLimited(clientKey(request))) {
             redirectAttributes.addFlashAttribute("errorMessage", "도배가 감지되었습니다. 잠시 후 다시 시도해주세요.");
-            return reviewsRedirectUrlWithoutCount(form.getToiletId());
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
 
         reviewService.update(form.getReviewId(), form.getRating(), form.getComment());
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 수정되었습니다.");
-        return reviewsRedirectUrlWithoutCount(form.getToiletId());
+        return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
     }
 
     @PostMapping("/reviews/delete")
@@ -252,7 +260,7 @@ public class ReviewController {
                          RedirectAttributes redirectAttributes) {
         reviewService.delete(reviewId);
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 삭제되었습니다.");
-        return reviewsRedirectUrlWithoutCount(toiletId);
+        return reviewsRedirectUrlWithoutCount(toiletId, redirectAttributes);
     }
 
     @PostMapping("/reviews/report")
@@ -270,30 +278,43 @@ public class ReviewController {
             log.warn("리뷰 신고 실패 reviewId={}", reviewId, e);
             redirectAttributes.addFlashAttribute("errorMessage", "신고 처리 중 오류가 발생했습니다.");
         }
-        return reviewsRedirectUrlWithoutCount(toiletId);
+        return reviewsRedirectUrlWithoutCount(toiletId, redirectAttributes);
     }
 
-    private String reviewsRedirectUrlWithoutCount(Long toiletId) {
-        return "redirect:/reviews?toiletId=" + toiletId + "&skipViewCount=true";
+    private String reviewsRedirectUrlWithoutCount(Long toiletId, RedirectAttributes redirectAttributes) {
+        redirectAttributes.addFlashAttribute(SKIP_VIEW_COUNT_ONCE, true);
+        return "redirect:/reviews?toiletId=" + toiletId;
     }
 
     private boolean hasRecentViewCookie(HttpServletRequest request, Long toiletId) {
-        Cookie[] cookies = request.getCookies();
-        if (cookies == null || cookies.length == 0 || toiletId == null) {
+        if (toiletId == null) {
             return false;
         }
-        String cookieName = viewCountCookieName(toiletId);
-        for (Cookie cookie : cookies) {
-            if (cookieName.equals(cookie.getName())) {
-                return true;
-            }
-        }
-        return false;
+        long now = System.currentTimeMillis();
+        Map<Long, Long> history = readViewHistory(request, now);
+        Long seenAt = history.get(toiletId);
+        return seenAt != null && now - seenAt <= VIEW_COUNT_WINDOW_MS;
     }
 
-    private void addRecentViewCookie(HttpServletResponse response, Long toiletId, boolean secure) {
+    private void addRecentViewCookie(HttpServletRequest request, HttpServletResponse response, Long toiletId, boolean secure) {
         if (toiletId == null) return;
-        Cookie cookie = new Cookie(viewCountCookieName(toiletId), "1");
+        long now = System.currentTimeMillis();
+        Map<Long, Long> history = readViewHistory(request, now);
+        history.put(toiletId, now);
+
+        List<Map.Entry<Long, Long>> entries = new ArrayList<>(history.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue(), a.getValue()));
+
+        StringBuilder value = new StringBuilder();
+        int count = 0;
+        for (Map.Entry<Long, Long> e : entries) {
+            if (count >= VIEW_HISTORY_MAX_ENTRIES) break;
+            if (value.length() > 0) value.append('_');
+            value.append(e.getKey()).append('.').append(e.getValue());
+            count++;
+        }
+
+        Cookie cookie = new Cookie(VIEW_HISTORY_COOKIE_NAME, value.toString());
         cookie.setHttpOnly(true);
         cookie.setSecure(secure);
         cookie.setPath("/");
@@ -301,7 +322,37 @@ public class ReviewController {
         response.addCookie(cookie);
     }
 
-    private String viewCountCookieName(Long toiletId) {
-        return VIEW_COUNT_COOKIE_PREFIX + toiletId;
+    private Map<Long, Long> readViewHistory(HttpServletRequest request, long now) {
+        Map<Long, Long> result = new HashMap<>();
+        Cookie[] cookies = request == null ? null : request.getCookies();
+        if (cookies == null || cookies.length == 0) {
+            return result;
+        }
+        String raw = null;
+        for (Cookie cookie : cookies) {
+            if (VIEW_HISTORY_COOKIE_NAME.equals(cookie.getName())) {
+                raw = cookie.getValue();
+                break;
+            }
+        }
+        if (raw == null || raw.isBlank()) {
+            return result;
+        }
+        String[] tokens = raw.split("_");
+        for (String token : tokens) {
+            if (token == null || token.isBlank()) continue;
+            int dot = token.indexOf('.');
+            if (dot <= 0 || dot >= token.length() - 1) continue;
+            try {
+                long id = Long.parseLong(token.substring(0, dot));
+                long ts = Long.parseLong(token.substring(dot + 1));
+                if (now - ts <= VIEW_COUNT_WINDOW_MS) {
+                    result.put(id, Math.max(ts, result.getOrDefault(id, 0L)));
+                }
+            } catch (NumberFormatException ignored) {
+                // skip malformed entries
+            }
+        }
+        return result;
     }
 }

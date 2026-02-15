@@ -23,13 +23,14 @@ public class GlobalExceptionHandler {
 
         String retryUrl = buildRetryUrl(request);
         redirectAttributes.addFlashAttribute("warnMessage", CONFLICT_MESSAGE);
+        redirectAttributes.addFlashAttribute("skipViewCountOnce", true);
         return "redirect:" + retryUrl;
     }
 
     private String buildRetryUrl(HttpServletRequest request) {
         String toiletId = request.getParameter("toiletId");
         if (toiletId != null && !toiletId.isBlank()) {
-            return "/reviews?toiletId=" + toiletId + "&skipViewCount=true";
+            return "/reviews?toiletId=" + toiletId;
         }
 
         String referer = request.getHeader("Referer");

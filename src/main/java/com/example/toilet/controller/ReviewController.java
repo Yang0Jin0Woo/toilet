@@ -6,7 +6,9 @@ import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -39,6 +41,8 @@ import java.util.stream.Collectors;
 @Slf4j
 @Validated
 public class ReviewController {
+    private static final int VIEW_COUNT_WINDOW_SECONDS = 600;
+    private static final String VIEW_COUNT_COOKIE_PREFIX = "review_viewed_";
 
     public static class ReviewForm {
         @NotNull
@@ -114,14 +118,20 @@ public class ReviewController {
     @GetMapping("/reviews")
     public String reviews(@RequestParam("toiletId") Long toiletId,
                           @RequestParam(name = "skipViewCount", defaultValue = "false") boolean skipViewCount,
+                          HttpServletRequest request,
+                          HttpServletResponse response,
                           Model model) {
         long startNanos = System.nanoTime();
 
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
-        long pageViewCount = skipViewCount
-                ? reviewService.getReviewPageViewCount(toiletId)
-                : reviewService.increaseReviewPageViewCount(toiletId);
+        boolean shouldIncreaseViewCount = !skipViewCount && !hasRecentViewCookie(request, toiletId);
+        long pageViewCount = shouldIncreaseViewCount
+                ? reviewService.increaseReviewPageViewCount(toiletId)
+                : reviewService.getReviewPageViewCount(toiletId);
+        if (shouldIncreaseViewCount) {
+            addRecentViewCookie(response, toiletId, request.isSecure());
+        }
 
         Object error = model.asMap().get("errorMessage");
         if (error != null) model.addAttribute("errorMessage", error.toString());
@@ -242,5 +252,33 @@ public class ReviewController {
 
     private String reviewsRedirectUrlWithoutCount(Long toiletId) {
         return "redirect:/reviews?toiletId=" + toiletId + "&skipViewCount=true";
+    }
+
+    private boolean hasRecentViewCookie(HttpServletRequest request, Long toiletId) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null || cookies.length == 0 || toiletId == null) {
+            return false;
+        }
+        String cookieName = viewCountCookieName(toiletId);
+        for (Cookie cookie : cookies) {
+            if (cookieName.equals(cookie.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void addRecentViewCookie(HttpServletResponse response, Long toiletId, boolean secure) {
+        if (toiletId == null) return;
+        Cookie cookie = new Cookie(viewCountCookieName(toiletId), "1");
+        cookie.setHttpOnly(true);
+        cookie.setSecure(secure);
+        cookie.setPath("/");
+        cookie.setMaxAge(VIEW_COUNT_WINDOW_SECONDS);
+        response.addCookie(cookie);
+    }
+
+    private String viewCountCookieName(Long toiletId) {
+        return VIEW_COUNT_COOKIE_PREFIX + toiletId;
     }
 }

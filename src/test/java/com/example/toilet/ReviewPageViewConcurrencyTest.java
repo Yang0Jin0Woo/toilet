@@ -50,12 +50,17 @@ class ReviewPageViewConcurrencyTest {
         start.countDown();
         service.shutdown();
         boolean terminated = service.awaitTermination(TIME_OUT, TimeUnit.SECONDS);
+        final long expectedCount = 100L;
         final long viewCount = reviewService.getReviewPageViewCount(toiletId);
+        final boolean matched = (viewCount == expectedCount);
+
+        System.out.printf("조회수 검증 결과: expected=%d, actual=%d, match=%s%n",
+                expectedCount, viewCount, matched ? "일치" : "불일치");
 
         Assertions.assertThat(terminated).isTrue();
         Assertions.assertThat(viewCount)
                 .withFailMessage("동시성 제어 미적용으로 예상 조회수(100)와 불일치 발생: actual=%s", viewCount)
-                .isEqualTo(100L);
+                .isEqualTo(expectedCount);
     }
 
     private void 조회수초기화(Long toiletId) {

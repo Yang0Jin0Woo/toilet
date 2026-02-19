@@ -109,6 +109,7 @@ src
          ├─ DtoProjectionComparisonTest.java
          ├─ GroupAggComparisonTest.java
          ├─ GroupCacheComparisonTest.java
+         ├─ ReviewPageViewConcurrencyTest.java
          ├─ SlowQueryTestConfig.java
          └─ ToiletApplicationTests.java
 ```
@@ -177,6 +178,15 @@ src
     - 문제: `review_page_view`를 `select 후 +1 계산 -> update` 방식으로 처리해 동시 요청 시 유실 업데이트가 발생하고, 100명 동시 조회에서도 최종 조회 수가 100보다 작아질 수 있었음
     - 해결: `@Modifying` + native query로 `insert ... on duplicate key update view_count = view_count + 1` 원자 업데이트를 적용해 DB 단에서 증가 연산을 직렬화
     - 결과: 조회 수 동시성 테스트(`ReviewPageViewConcurrencyTest`)에서 100명 동시 조회 시 최종 조회 수 100을 안정적으로 만족
+  - 조회수 업데이트 전략 성능/정합성 비교(`ReviewPageViewUpdatePerfComparisonTest`)
+    - 조건: `runs=100`, `concurrentUsers=1000`, 동일 `toiletId`에 동시 시작
+
+| 전략 | 총 수행시간 min~P95(평균) | 최종 조회수 min~P95(평균) | 유실 업데이트율 min~P95(평균) |
+|:---:|:---:|:---:|:---:|
+| 동시성 제어 미적용 | 225.81 ms ~ 664.84 ms (504.75 ms) | 4 ~ 100 (82) | 90.00% ~ 98.70% (91.80%) |
+| 원자 업데이트 | 810.37 ms ~ 950.04 ms (910.30 ms) | 1000 ~ 1000 (1000) | 0.00% ~ 0.00% (0.00%) |
+| 비관적 락 | 1017.13 ms ~ 1243.17 ms (1093.44 ms) | 1000 ~ 1000 (1000) | 0.00% ~ 0.00% (0.00%) |
+
   - 조회수 정책 보강(문제 -> 해결 -> 결과)
     - 문제: 동일 사용자의 새로고침/반복 진입, 쿠키 미사용 자동화 요청으로 조회수가 과대 집계되어 지표 신뢰도가 떨어질 수 있었음
     - 해결: 동일 사용자-동일 화장실 재조회는 쿠키 기반 1분 윈도우에서 조회수 증가 제외, 추가로 `IP+UA` 기준 1분 30회 초과 요청은 조회수 증가 제외
@@ -266,6 +276,9 @@ src
   - 리뷰 평균/개수 집계 방식 3-way 비교(`per_toilet` vs `group by` vs `fetch join`), 100회 실행, `sampleToilets=4624`, 캐시 X
 - `GroupCacheComparisonTest`
   - 그룹 집계 + 리스트 캐시 적용 전/후 비교, 100회 실행, TTL= 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
+- `ReviewPageViewConcurrencyTest`
+  - 조회수 테이블(`review_page_view`)을 0으로 초기화한 뒤, 100개 스레드를 동시에 시작해 조회수 증가를 수행하고 최종 값이 기대값(100)과 일치하는지 검증
+  - 테스트 로그에 `expected/actual/match(일치|불일치)`를 출력해 실패 시 원인 파악을 빠르게 지원
 - `ReviewSynchronizedConcurrencyTest`
   - 동시 업데이트에서 `synchronized` 적용 전/후 정합성 비교, 100회 실행
 - `DtoProjectionComparisonTest`

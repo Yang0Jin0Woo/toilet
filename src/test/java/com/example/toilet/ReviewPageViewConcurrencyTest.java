@@ -25,7 +25,7 @@ class ReviewPageViewConcurrencyTest {
     private static final int TIME_OUT = 10;
 
     @Test
-    void 백명이동시에조회_예상조회수100_실패() throws Exception {
+    void 백명이동시에조회_예상조회수100_성공() throws Exception {
         final Long toiletId = 화장실아이디조회();
         final int threadCount = 100;
         ExecutorService service = Executors.newFixedThreadPool(threadCount);

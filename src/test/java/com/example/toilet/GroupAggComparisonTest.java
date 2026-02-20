@@ -13,10 +13,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 @SpringBootTest(properties = {
@@ -36,6 +39,13 @@ class GroupAggComparisonTest {
     private static final int RUNS = 100;
     private static final int TOILET_SAMPLE_SIZE = 4624;
     private static final int BATCH_FETCH_SIZE = 100;
+
+    private enum Strategy {
+        N_PLUS_ONE,
+        FETCH_JOIN,
+        BATCH_FETCH,
+        DTO_PROJECTION
+    }
 
     @Autowired
     private ToiletRepository toiletRepository;
@@ -85,38 +95,46 @@ class GroupAggComparisonTest {
         long[] dtoAggMs = new long[RUNS];
         long[] dtoTotalMs = new long[RUNS];
 
+        Random random = new Random(20260220L);
+        List<Strategy> executionOrder = new ArrayList<>(List.of(Strategy.values()));
+
         for (int i = 0; i < RUNS; i++) {
-            Timing fetchJoin = measureFetchJoin(toiletIds);
-            fetchListCounts[i] = fetchJoin.listCount;
-            fetchAggCounts[i] = fetchJoin.ratingAggCount;
-            fetchDbCounts[i] = fetchJoin.dbCount;
-            fetchRowCounts[i] = fetchJoin.rowCount;
-            fetchAggMs[i] = fetchJoin.aggMs;
-            fetchTotalMs[i] = fetchJoin.totalMs;
+            Collections.shuffle(executionOrder, random);
 
-            Timing nPlusOne = measureNPlusOnePerToilet(toiletIds);
-            nPlusOneListCounts[i] = nPlusOne.listCount;
-            nPlusOneAggCounts[i] = nPlusOne.ratingAggCount;
-            nPlusOneDbCounts[i] = nPlusOne.dbCount;
-            nPlusOneRowCounts[i] = nPlusOne.rowCount;
-            nPlusOneAggMs[i] = nPlusOne.aggMs;
-            nPlusOneTotalMs[i] = nPlusOne.totalMs;
+            Measurement nPlusOne = null;
+            Measurement fetchJoin = null;
+            Measurement batchFetch = null;
+            Measurement dtoProjection = null;
 
-            Timing batchFetch = measureBatchFetch(toiletIds);
-            batchListCounts[i] = batchFetch.listCount;
-            batchAggCounts[i] = batchFetch.ratingAggCount;
-            batchDbCounts[i] = batchFetch.dbCount;
-            batchRowCounts[i] = batchFetch.rowCount;
-            batchAggMs[i] = batchFetch.aggMs;
-            batchTotalMs[i] = batchFetch.totalMs;
+            for (Strategy strategy : executionOrder) {
+                switch (strategy) {
+                    case N_PLUS_ONE -> {
+                        nPlusOne = measureNPlusOnePerToilet(toiletIds);
+                        storeTiming(nPlusOne.timing, i, nPlusOneListCounts, nPlusOneAggCounts, nPlusOneDbCounts, nPlusOneRowCounts, nPlusOneAggMs, nPlusOneTotalMs);
+                    }
+                    case FETCH_JOIN -> {
+                        fetchJoin = measureFetchJoin(toiletIds);
+                        storeTiming(fetchJoin.timing, i, fetchListCounts, fetchAggCounts, fetchDbCounts, fetchRowCounts, fetchAggMs, fetchTotalMs);
+                    }
+                    case BATCH_FETCH -> {
+                        batchFetch = measureBatchFetch(toiletIds);
+                        storeTiming(batchFetch.timing, i, batchListCounts, batchAggCounts, batchDbCounts, batchRowCounts, batchAggMs, batchTotalMs);
+                    }
+                    case DTO_PROJECTION -> {
+                        dtoProjection = measureDtoProjection(toiletIds);
+                        storeTiming(dtoProjection.timing, i, dtoListCounts, dtoAggCounts, dtoDbCounts, dtoRowCounts, dtoAggMs, dtoTotalMs);
+                    }
+                }
+            }
 
-            Timing dtoProjection = measureDtoProjection(toiletIds);
-            dtoListCounts[i] = dtoProjection.listCount;
-            dtoAggCounts[i] = dtoProjection.ratingAggCount;
-            dtoDbCounts[i] = dtoProjection.dbCount;
-            dtoRowCounts[i] = dtoProjection.rowCount;
-            dtoAggMs[i] = dtoProjection.aggMs;
-            dtoTotalMs[i] = dtoProjection.totalMs;
+            org.junit.jupiter.api.Assertions.assertNotNull(nPlusOne, "N+1 result should not be null");
+            org.junit.jupiter.api.Assertions.assertNotNull(fetchJoin, "FETCH_JOIN result should not be null");
+            org.junit.jupiter.api.Assertions.assertNotNull(batchFetch, "BATCH_FETCH result should not be null");
+            org.junit.jupiter.api.Assertions.assertNotNull(dtoProjection, "DTO_PROJECTION result should not be null");
+
+            assertSameRows(nPlusOne.rowsById, fetchJoin.rowsById, "FETCH_JOIN");
+            assertSameRows(nPlusOne.rowsById, batchFetch.rowsById, "BATCH_FETCH");
+            assertSameRows(nPlusOne.rowsById, dtoProjection.rowsById, "DTO_PROJECTION");
         }
 
         log.info("목록 조회 전략 비교 설정: runs={}, sampleToilets={}, batchFetchSize={}",
@@ -127,7 +145,7 @@ class GroupAggComparisonTest {
         logSummary("DTO_PROJECTION", dtoListCounts, dtoAggCounts, dtoDbCounts, dtoRowCounts, dtoAggMs, dtoTotalMs);
     }
 
-    private Timing measureNPlusOnePerToilet(List<Long> toiletIds) {
+    private Measurement measureNPlusOnePerToilet(List<Long> toiletIds) {
         entityManager.clear();
         SlowQueryTestConfig.resetSqlCounters();
 
@@ -138,8 +156,7 @@ class GroupAggComparisonTest {
                     ReviewRepository.SingleRatingTotalAgg agg = reviewRepository.aggregateTotalsByToiletId(toiletId);
                     long sum = agg == null || agg.getSum() == null ? 0L : agg.getSum();
                     long cnt = agg == null || agg.getCnt() == null ? 0L : agg.getCnt();
-                    double avg = cnt <= 0 ? 0.0 : (double) sum / (double) cnt;
-                    return new ListRow(toiletId, avg, cnt);
+                    return new ListRow(toiletId, sum, cnt);
                 })
                 .toList();
         long aggMsValue = (System.nanoTime() - aggStart) / 1_000_000;
@@ -151,10 +168,11 @@ class GroupAggComparisonTest {
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
         long dbCount = SlowQueryTestConfig.getSqlStatementCount();
-        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        Timing timing = new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        return new Measurement(timing, toRowMap(rows));
     }
 
-    private Timing measureFetchJoin(List<Long> toiletIds) {
+    private Measurement measureFetchJoin(List<Long> toiletIds) {
         entityManager.clear();
         SlowQueryTestConfig.resetSqlCounters();
 
@@ -171,10 +189,11 @@ class GroupAggComparisonTest {
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
         long dbCount = SlowQueryTestConfig.getSqlStatementCount();
-        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        Timing timing = new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        return new Measurement(timing, toRowMap(rows));
     }
 
-    private Timing measureBatchFetch(List<Long> toiletIds) {
+    private Measurement measureBatchFetch(List<Long> toiletIds) {
         entityManager.clear();
         SlowQueryTestConfig.resetSqlCounters();
 
@@ -191,10 +210,11 @@ class GroupAggComparisonTest {
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
         long dbCount = SlowQueryTestConfig.getSqlStatementCount();
-        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        Timing timing = new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        return new Measurement(timing, toRowMap(rows));
     }
 
-    private Timing measureDtoProjection(List<Long> toiletIds) {
+    private Measurement measureDtoProjection(List<Long> toiletIds) {
         entityManager.clear();
         SlowQueryTestConfig.resetSqlCounters();
 
@@ -209,25 +229,21 @@ class GroupAggComparisonTest {
             }
             long sum = snapshot.getRatingSum() == null ? 0L : snapshot.getRatingSum();
             long cnt = snapshot.getRatingCount() == null ? 0L : snapshot.getRatingCount();
-            double avg = cnt <= 0 ? 0.0 : (double) sum / (double) cnt;
-            rowsById.put(toiletId, new ListRow(toiletId, avg, cnt));
+            rowsById.put(toiletId, new ListRow(toiletId, sum, cnt));
         }
-        List<ListRow> rows = toiletIds.stream()
-                .map(id -> {
-                    ListRow row = rowsById.get(id);
-                    if (row == null) {
-                        throw new IllegalStateException("dto_projection result missing toiletId=" + id);
-                    }
-                    return row;
-                })
-                .toList();
+        for (Long toiletId : toiletIds) {
+            if (!rowsById.containsKey(toiletId)) {
+                throw new IllegalStateException("dto_projection result missing toiletId=" + toiletId);
+            }
+        }
         long aggMsValue = (System.nanoTime() - aggStart) / 1_000_000;
         long totalMs = (System.nanoTime() - start) / 1_000_000;
 
         long listCount = SlowQueryTestConfig.getSqlToiletListCount();
         long ratingAggCount = SlowQueryTestConfig.getSqlRatingAggCount();
         long dbCount = SlowQueryTestConfig.getSqlStatementCount();
-        return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rows.size());
+        Timing timing = new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount, rowsById.size());
+        return new Measurement(timing, rowsById);
     }
 
     private Map<Long, RatingTotal> aggregateByFetchJoin(List<Long> toiletIds) {
@@ -294,10 +310,59 @@ class GroupAggComparisonTest {
                     RatingTotal total = aggByToilet.get(toilet.getId());
                     long sum = total == null ? 0L : total.sum;
                     long cnt = total == null ? 0L : total.cnt;
-                    double avg = cnt <= 0 ? 0.0 : (double) sum / (double) cnt;
-                    return new ListRow(toilet.getId(), avg, cnt);
+                    return new ListRow(toilet.getId(), sum, cnt);
                 })
                 .toList();
+    }
+
+    private Map<Long, ListRow> toRowMap(List<ListRow> rows) {
+        Map<Long, ListRow> rowsById = new HashMap<>(rows.size());
+        for (ListRow row : rows) {
+            Long toiletId = row.toiletId();
+            if (toiletId == null) {
+                throw new IllegalStateException("row contains null toiletId");
+            }
+            if (rowsById.put(toiletId, row) != null) {
+                throw new IllegalStateException("duplicate toiletId in result: " + toiletId);
+            }
+        }
+        return rowsById;
+    }
+
+    private void storeTiming(Timing timing,
+                             int runIndex,
+                             long[] listCounts,
+                             long[] ratingAggCounts,
+                             long[] dbCounts,
+                             long[] rowCounts,
+                             long[] aggMsValues,
+                             long[] totalMsValues) {
+        listCounts[runIndex] = timing.listCount;
+        ratingAggCounts[runIndex] = timing.ratingAggCount;
+        dbCounts[runIndex] = timing.dbCount;
+        rowCounts[runIndex] = timing.rowCount;
+        aggMsValues[runIndex] = timing.aggMs;
+        totalMsValues[runIndex] = timing.totalMs;
+    }
+
+    private void assertSameRows(Map<Long, ListRow> expected,
+                                Map<Long, ListRow> actual,
+                                String label) {
+        org.junit.jupiter.api.Assertions.assertEquals(
+                expected.size(), actual.size(), label + " row size mismatch");
+        for (Map.Entry<Long, ListRow> entry : expected.entrySet()) {
+            Long toiletId = entry.getKey();
+            ListRow expectedRow = entry.getValue();
+            ListRow actualRow = actual.get(toiletId);
+            org.junit.jupiter.api.Assertions.assertNotNull(
+                    actualRow, label + " missing toiletId=" + toiletId);
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    expectedRow.ratingSum(), actualRow.ratingSum(),
+                    label + " ratingSum mismatch toiletId=" + toiletId);
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    expectedRow.reviewCount(), actualRow.reviewCount(),
+                    label + " reviewCount mismatch toiletId=" + toiletId);
+        }
     }
 
     private void logSummary(String label,
@@ -376,10 +441,20 @@ class GroupAggComparisonTest {
         }
     }
 
+    private static final class Measurement {
+        private final Timing timing;
+        private final Map<Long, ListRow> rowsById;
+
+        private Measurement(Timing timing, Map<Long, ListRow> rowsById) {
+            this.timing = timing;
+            this.rowsById = rowsById;
+        }
+    }
+
     private record RatingTotal(long sum, long cnt) {
     }
 
-    private record ListRow(Long toiletId, double avgRating, long reviewCount) {
+    private record ListRow(Long toiletId, long ratingSum, long reviewCount) {
     }
 
     private static final class Stats {

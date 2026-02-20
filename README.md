@@ -30,7 +30,7 @@
 
 - 리뷰/별점 기능을 통해 화장실 품질 정보를 시각화 및 사용성 증가
 
-- 평점 집계를 그룹 쿼리로 최적화하고 리스트 캐시(TTL)로 응답 지연 및 DB 부하 줄임(read 기준)
+- 평균 평점/리뷰 수 조회의 N+1 문제를 개선하고 리스트 캐시(TTL)로 응답 지연 및 DB 부하를 줄임(read 기준)
 
 
 ## 핵심 기능
@@ -149,15 +149,16 @@ src
 
 ## 성능
 
-- 집계 방식
-  - 리뷰 평균/개수를 N+1 방식 대신 그룹 집계로 계산
-    - 쿼리 방식으로 `개별 화장실별 집계` vs `group by` vs `fetch join`을 비교하며 캐시/TTL을 끈 상태에서 SQL 카운트와 agg/total 시간을 `RUNS=100`, `sampleToilets=4624`로 측정
+- N+1 문제 개선(목록 조회)
+  - 동일 요구사항(화장실 목록 + 평균 평점/리뷰 수) 기준으로 `N+1_PROBLEM`, `FETCH_JOIN`, `BATCH_FETCH`, `DTO_PROJECTION`을 비교
+  - 측정 조건: `RUNS=100`, `sampleToilets=4624`, `batchFetchSize=100`, 캐시 비활성화
 
-|   집계 방식    | 리스트 조회 횟수 | 평점 집계 횟수 | 집계 연산 시간 | 전체 응답 시간 |
-|:----------:|:---:|:---:|:---:|:---:|
-| 개별 화장실별 집계 | 0 | 4,624 | 896 ~ 1,191 ms (평균 969 ms) | 896 ~ 1,191 ms (평균 969 ms) |
-|  GROUP BY  | 0 | 1 | 9 ~ 12 ms (평균 10 ms) | 9 ~ 12 ms (평균 10 ms) |
-| FETCH JOIN | 0 | 1 | 9 ~ 14 ms (평균 10 ms) | 9 ~ 14 ms (평균 10 ms) |
+| 전략 | 목록 쿼리 수 | 리뷰 집계 쿼리 수 | 총 DB 쿼리 수 | 행 수 | 전체 시간 (ms, min~P95(avg)) |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| N+1_PROBLEM | 0 | 4,624 | 4,624 | 4,624 | 892~969 ms (925 ms) |
+| FETCH_JOIN | 1 | 1 | 2 | 4,624 | 28~37 ms (32 ms) |
+| BATCH_FETCH | 1 | 1 | 2 | 4,624 | 27~36 ms (31 ms) |
+| DTO_PROJECTION | 1 | 0 | 1 | 4,624 | 19~28 ms (22 ms) |
 
 
 - 리스트 캐시
@@ -273,7 +274,7 @@ src
 - `ToiletApplicationTests`
   - Spring 컨텍스트 로딩 스모크 테스트
 - `GroupAggComparisonTest`
-  - 리뷰 평균/개수 집계 방식 3-way 비교(`per_toilet` vs `group by` vs `fetch join`), 100회 실행, `sampleToilets=4624`, 캐시 X
+  - 동일 목록 조회 요구사항에서 N+1 개선 전략 비교(`N+1_PROBLEM` vs `FETCH_JOIN` vs `BATCH_FETCH` vs `DTO_PROJECTION`), 100회 실행, `sampleToilets=4624`, `batchFetchSize=100`, 캐시 X
 - `GroupCacheComparisonTest`
   - 그룹 집계 + 리스트 캐시 적용 전/후 비교, 100회 실행, TTL= 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
 - `ReviewPageViewConcurrencyTest`

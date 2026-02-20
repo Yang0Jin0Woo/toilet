@@ -20,7 +20,8 @@ import java.util.Arrays;
 @Slf4j
 class GroupCacheComparisonTest {
     private static final int RUNS = 100;
-    private static final long LIST_TTL_MS = 10_000L;
+    private static final long LIST_TTL_30SEC_MS = 30_000L;
+    private static final long LIST_TTL_3SEC_MS = 3_000L;
     private static final int LONG_SLEEP_RATE_PERCENT = 10;
     private static final long SHORT_SLEEP_MAX_MS = 200L;
     private static final long LONG_SLEEP_MIN_MS = 3_500L;
@@ -32,53 +33,81 @@ class GroupCacheComparisonTest {
     private ToiletService toiletService;
 
     @Test
-    void compareGroupCacheOnOff() {
+    void DTO프로젝션캐시적용전후비교() {
         long[] noCacheListCounts = new long[RUNS];
         long[] noCacheAggCounts = new long[RUNS];
         double[] noCacheAggMs = new double[RUNS];
         double[] noCacheTotalMs = new double[RUNS];
         long[] noCacheDbCounts = new long[RUNS];
 
-        long[] cacheListCounts = new long[RUNS];
-        long[] cacheAggCounts = new long[RUNS];
-        double[] cacheAggMs = new double[RUNS];
-        double[] cacheTotalMs = new double[RUNS];
-        long[] cacheDbCounts = new long[RUNS];
+        long[] cache30ListCounts = new long[RUNS];
+        long[] cache30AggCounts = new long[RUNS];
+        double[] cache30AggMs = new double[RUNS];
+        double[] cache30TotalMs = new double[RUNS];
+        long[] cache30DbCounts = new long[RUNS];
+
+        long[] cache3ListCounts = new long[RUNS];
+        long[] cache3AggCounts = new long[RUNS];
+        double[] cache3AggMs = new double[RUNS];
+        double[] cache3TotalMs = new double[RUNS];
+        long[] cache3DbCounts = new long[RUNS];
 
         for (int i = 0; i < RUNS; i++) {
-            Timing noCache = measureOnce(false, true);
+            Timing noCache = measureOnce(false, true, LIST_TTL_30SEC_MS);
             noCacheListCounts[i] = noCache.listCount;
             noCacheAggCounts[i] = noCache.ratingAggCount;
             noCacheAggMs[i] = noCache.aggMs;
             noCacheTotalMs[i] = noCache.totalMs;
             noCacheDbCounts[i] = noCache.dbCount;
+            if (noCache.ratingAggCount != 0L) {
+                throw new IllegalStateException("DTO cache-off path should not execute review aggregation query");
+            }
         }
 
         clearCaches();
-        warmCache();
+        warmCache(LIST_TTL_30SEC_MS);
         for (int i = 0; i < RUNS; i++) {
             sleepJitter();
-            Timing cached = measureOnce(true, false);
-            cacheListCounts[i] = cached.listCount;
-            cacheAggCounts[i] = cached.ratingAggCount;
-            cacheAggMs[i] = cached.aggMs;
-            cacheTotalMs[i] = cached.totalMs;
-            cacheDbCounts[i] = cached.dbCount;
+            Timing cached30 = measureOnce(true, false, LIST_TTL_30SEC_MS);
+            cache30ListCounts[i] = cached30.listCount;
+            cache30AggCounts[i] = cached30.ratingAggCount;
+            cache30AggMs[i] = cached30.aggMs;
+            cache30TotalMs[i] = cached30.totalMs;
+            cache30DbCounts[i] = cached30.dbCount;
+            if (cached30.ratingAggCount != 0L) {
+                throw new IllegalStateException("DTO cache-on-30sec path should not execute review aggregation query");
+            }
         }
 
-        log.info("GROUP_CACHE_CONFIG runs={} ttlMs(list)={} longSleepRate%={} shortSleepMaxMs={} longSleepMs={}~{} seed={}",
-                RUNS, LIST_TTL_MS, LONG_SLEEP_RATE_PERCENT,
+        clearCaches();
+        warmCache(LIST_TTL_3SEC_MS);
+        for (int i = 0; i < RUNS; i++) {
+            sleepJitter();
+            Timing cached3 = measureOnce(true, false, LIST_TTL_3SEC_MS);
+            cache3ListCounts[i] = cached3.listCount;
+            cache3AggCounts[i] = cached3.ratingAggCount;
+            cache3AggMs[i] = cached3.aggMs;
+            cache3TotalMs[i] = cached3.totalMs;
+            cache3DbCounts[i] = cached3.dbCount;
+            if (cached3.ratingAggCount != 0L) {
+                throw new IllegalStateException("DTO cache-on-3sec path should not execute review aggregation query");
+            }
+        }
+
+        log.info("DTO 캐시 비교 설정: runs={}, 리스트TTL(ms) 30sec/3sec={}/{}, 장기지연비율(%)={}, 단기지연최대(ms)={}, 장기지연(ms)={}~{}, seed={}",
+                RUNS, LIST_TTL_30SEC_MS, LIST_TTL_3SEC_MS, LONG_SLEEP_RATE_PERCENT,
                 SHORT_SLEEP_MAX_MS, LONG_SLEEP_MIN_MS, LONG_SLEEP_MAX_MS, RNG_SEED);
-        logSummary("CACHE_OFF", noCacheListCounts, noCacheAggCounts, noCacheDbCounts, noCacheAggMs, noCacheTotalMs);
-        logSummary("CACHE_ON", cacheListCounts, cacheAggCounts, cacheDbCounts, cacheAggMs, cacheTotalMs);
+        logSummary("DTO_CACHE_OFF", noCacheListCounts, noCacheAggCounts, noCacheDbCounts, noCacheAggMs, noCacheTotalMs);
+        logSummary("DTO_CACHE_ON_30SEC", cache30ListCounts, cache30AggCounts, cache30DbCounts, cache30AggMs, cache30TotalMs);
+        logSummary("DTO_CACHE_ON_3SEC", cache3ListCounts, cache3AggCounts, cache3DbCounts, cache3AggMs, cache3TotalMs);
     }
 
-    private void warmCache() {
-        measureOnce(true, false);
+    private void warmCache(long ttlMs) {
+        measureOnce(true, false, ttlMs);
     }
 
-    private Timing measureOnce(boolean cacheEnabled, boolean resetCache) {
-        configure(cacheEnabled);
+    private Timing measureOnce(boolean cacheEnabled, boolean resetCache, long ttlMs) {
+        configure(cacheEnabled, ttlMs);
         if (resetCache) {
             clearCaches();
         }
@@ -97,10 +126,9 @@ class GroupCacheComparisonTest {
         return new Timing(totalMs, aggMsValue, listCount, ratingAggCount, dbCount);
     }
 
-    private void configure(boolean cacheEnabled) {
+    private void configure(boolean cacheEnabled, long ttlMs) {
         ReflectionTestUtils.setField(toiletService, "listCacheEnabled", cacheEnabled);
-        ReflectionTestUtils.setField(toiletService, "ratingAggregationMode", "group");
-        ReflectionTestUtils.setField(toiletService, "listCacheTtlMs", LIST_TTL_MS);
+        ReflectionTestUtils.setField(toiletService, "listCacheTtlMs", ttlMs);
     }
 
     private void clearCaches() {
@@ -120,7 +148,7 @@ class GroupCacheComparisonTest {
         Stats aggMsStats = stats(aggMsValues);
         Stats totalMsStats = stats(totalMsValues);
 
-        log.info("GROUP_CACHE_COMPARE ({}, listCount|ratingAggCount|dbCount|aggMs avg|min~P95|totalMs avg|min~P95:{}|{}|{}|{}|{}~{}|{}|{}~{})",
+        log.info("DTO 캐시 비교 ({}, 목록쿼리수|리뷰집계쿼리수|총DB쿼리수|집계ms 평균|min~P95|전체ms 평균|min~P95:{}|{}|{}|{}|{}~{}|{}|{}~{})",
                 label,
                 listPerReq,
                 aggPerReq,

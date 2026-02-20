@@ -163,15 +163,16 @@ src
 
 - 리스트 캐시
   - 리스트 캐시 TTL 60분, `list.cache.ttl-ms`로 조정 가능
-  - 테스트 환경: 리스트 캐시 ON/OFF 비교(RUNS=100, 랜덤 지연 포함)
+  - 테스트 환경: DTO 프로젝션 경로에서 리스트 캐시 ON/OFF 비교(`RUNS=100`, `ttlMs=30000/3000`, 장기 지연 10%(3.5~4.5s), 단기 지연 최대 200ms)
   - 리뷰 집계 지연과 동시 요청 시 합·개수 불일치로 지도/리뷰 평점이 어긋나는 문제가 있었으나, 리뷰 쓰기 트랜잭션에서 toilet.rating_sum/rating_count를 원자 업데이트하고 리뷰
     CRUD 시 리스트 캐시를 즉시 무효화 적용했고, 그 결과 리뷰 직후 최신 평점이 일관되게 노출됨
   - 추가 개선: 커밋 전 캐시 공백에서 구데이터가 재캐시될 수 있는 구간을 줄이기 위해 캐시 무효화와 SSE 발행을 `afterCommit`으로 이관하고, `afterCompletion`에서 트랜잭션 리소스(`pendingToiletIds` 등)를 정리해 정합성을 강화
 
-|   구분   | 리스트 조회 횟수 | 집계 연산 횟수 | DB 호출 횟수 |            집계 연산 시간             | 전체 응답 시간  |
-|:------:|:---------:|:--------:|:--------:|:-------------------------------:|:-------------------------------:|
-| 캐시 미적용 |     1     |    1     |    2     |  18.00 ~ 32.00 ms ( 21.05 ms)   | 47.69 ~ 70.15 ms (평균 54.91 ms) |
-| 캐시 적용  |     0     |    1     |    1     | 17.00 ~ 22.00 ms (평균 19.94 ms) | 17.91 ~ 24.73 ms (평균 22.11 ms) |
+| 구분 | 목록 쿼리 수 | 리뷰 집계 쿼리 수 | 총 DB 쿼리 수 | 집계 시간 (ms, min~P95(avg)) | 전체 시간 (ms, min~P95(avg)) |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| DTO_CACHE_OFF | 1 | 0 | 1 | 0.00~0.00 ms (0.02 ms) | 34.81~58.33 ms (41.78 ms) |
+| DTO_CACHE_ON_30SEC | 0 | 0 | 0 | 0.00~0.00 ms (0.01 ms) | 0.07~0.27 ms (0.55 ms) |
+| DTO_CACHE_ON_3SEC | 0 | 0 | 0 | 0.00~0.00 ms (0.00 ms) | 0.05~38.97 ms (4.10 ms) |
 
 
 - 동시성 제어
@@ -275,15 +276,19 @@ src
   - Spring 컨텍스트 로딩 스모크 테스트
 - `GroupAggComparisonTest`
   - 동일 목록 조회 요구사항에서 N+1 개선 전략 비교(`N+1_PROBLEM` vs `FETCH_JOIN` vs `BATCH_FETCH` vs `DTO_PROJECTION`), 100회 실행, `sampleToilets=4624`, `batchFetchSize=100`, 캐시 X
+  - 전략 실행 순서를 run마다 랜덤화하고, 전략 간 결과(sum/count) 동등성을 검증해 성능/정확성을 함께 확인
 - `GroupCacheComparisonTest`
-  - 그룹 집계 + 리스트 캐시 적용 전/후 비교, 100회 실행, TTL= 10초, 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)
+  - DTO 프로젝션 경로에서 리스트 캐시 비교(`DTO_CACHE_OFF` vs `DTO_CACHE_ON_30SEC` vs `DTO_CACHE_ON_3SEC`), 100회 실행
+  - 지연 시뮬레이션(랜덤 0~200ms, 10% 확률 3.5~4.5s)과 TTL(30초/3초) 조건에서 SQL 수와 응답시간을 측정
+  - 캐시 ON/OFF 모두 리뷰 집계 쿼리 미발생(`ratingAggCount=0`)을 검증
 - `ReviewPageViewConcurrencyTest`
   - 조회수 테이블(`review_page_view`)을 0으로 초기화한 뒤, 100개 스레드를 동시에 시작해 조회수 증가를 수행하고 최종 값이 기대값(100)과 일치하는지 검증
   - 테스트 로그에 `expected/actual/match(일치|불일치)`를 출력해 실패 시 원인 파악을 빠르게 지원
 - `ReviewSynchronizedConcurrencyTest`
   - 동시 업데이트에서 `synchronized` 적용 전/후 정합성 비교, 100회 실행
 - `DtoProjectionComparisonTest`
-  - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 성능 비교, 100회 실행
+  - 리스트/평점 집계에서 엔티티 vs DTO 프로젝션 회귀/성능 비교, 100회 실행
+  - 결과 정합성(행 수/집계값), SQL 수, 전체 시간/메모리/페이로드를 함께 측정
 - `SlowQueryTestConfig`
   - DataSource 프록시로 SQL 횟수/시간을 카운트하는 테스트 설정
 

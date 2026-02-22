@@ -6,6 +6,7 @@ import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -14,8 +15,9 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.annotation.Validated;
@@ -30,15 +32,17 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 @Controller
-@AllArgsConstructor
+@RequiredArgsConstructor
 @Slf4j
 @Validated
 public class ReviewController {
@@ -51,6 +55,7 @@ public class ReviewController {
     private static final int VIEW_HISTORY_COOKIE_MAX_CHARS = 2000;
     private static final int VIEW_RATE_LIMIT = 30;
     private static final long VIEW_RATE_LIMIT_WINDOW_MS = 60_000L;
+    private static final String UNKNOWN_TOKEN = "unknown";
 
     public static class ReviewForm {
         @NotNull
@@ -85,14 +90,41 @@ public class ReviewController {
     private static final int SPAM_LIMIT = 3;
     private static final long SPAM_WINDOW_MS = 60_000L;
     private static final int REPORT_BLOCK_THRESHOLD = 10;
+
+    @Value("${app.client-ip.trust-x-forwarded-for:true}")
+    private boolean trustXForwardedFor;
+
+    @Value("${app.client-ip.trusted-proxies:}")
+    private String trustedProxyConfig;
+
+    private Set<String> trustedProxyIps = Set.of();
+
     private final Cache<String, Deque<Long>> rateLimitBuckets = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofMinutes(20))
             .maximumSize(200_000)
             .build();
+
     private final Cache<String, Deque<Long>> viewRateLimitBuckets = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofMinutes(20))
             .maximumSize(200_000)
             .build();
+
+    @PostConstruct
+    void initTrustedProxyIps() {
+        if (trustedProxyConfig == null || trustedProxyConfig.isBlank()) {
+            trustedProxyIps = Set.of();
+            return;
+        }
+        Set<String> parsed = new LinkedHashSet<>();
+        String[] tokens = trustedProxyConfig.split(",");
+        for (String token : tokens) {
+            String ip = normalizeIp(token);
+            if (ip != null) {
+                parsed.add(ip);
+            }
+        }
+        trustedProxyIps = Collections.unmodifiableSet(parsed);
+    }
 
     private boolean hasBannedWord(String text) {
         if (text == null || text.isBlank()) return false;
@@ -101,15 +133,64 @@ public class ReviewController {
     }
 
     private String clientKey(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip != null && !ip.isBlank()) {
-            int idx = ip.indexOf(',');
-            if (idx > 0) ip = ip.substring(0, idx).trim();
-        } else {
-            ip = request.getRemoteAddr();
+        String remoteIp = normalizeIp(request.getRemoteAddr());
+        String ip = remoteIp == null ? "" : remoteIp;
+        if (trustXForwardedFor && isTrustedProxy(remoteIp)) {
+            String forwarded = extractForwardedClientIp(request.getHeader("X-Forwarded-For"));
+            if (forwarded != null) {
+                ip = forwarded;
+            }
         }
         String ua = request.getHeader("User-Agent");
         return ip + "|" + (ua == null ? "" : ua);
+    }
+
+    private boolean isTrustedProxy(String remoteIp) {
+        if (remoteIp == null) {
+            return false;
+        }
+        if (trustedProxyIps.isEmpty()) {
+            return true;
+        }
+        return trustedProxyIps.contains(remoteIp);
+    }
+
+    private String extractForwardedClientIp(String xForwardedFor) {
+        if (xForwardedFor == null || xForwardedFor.isBlank()) {
+            return null;
+        }
+        String[] parts = xForwardedFor.split(",");
+        for (String part : parts) {
+            String ip = normalizeIp(part);
+            if (ip != null) {
+                return ip;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeIp(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String candidate = raw.trim();
+        if (candidate.isEmpty() || UNKNOWN_TOKEN.equalsIgnoreCase(candidate)) {
+            return null;
+        }
+        if (candidate.startsWith("[") && candidate.endsWith("]")) {
+            candidate = candidate.substring(1, candidate.length() - 1);
+        }
+        if (candidate.startsWith("::ffff:")) {
+            candidate = candidate.substring(7);
+        }
+        if (candidate.contains(".") && candidate.indexOf(':') > -1 && candidate.indexOf(':') == candidate.lastIndexOf(':')) {
+            candidate = candidate.substring(0, candidate.lastIndexOf(':'));
+        }
+        try {
+            return java.net.InetAddress.getByName(candidate).getHostAddress();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private boolean isRateLimited(String key) {
@@ -156,8 +237,9 @@ public class ReviewController {
         Toilet toilet = toiletService.findById(toiletId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + toiletId));
         // FlashAttribute -> ModelAttribute로 1회 바인딩되는 스킵 플래그 사용
-        Object skipOnce = request.getAttribute(SKIP_VIEW_COUNT_ONCE);
-        boolean skipViewCount = (skipOnce instanceof Boolean) && (Boolean) skipOnce;
+        Object skipOnceFromModel = model.asMap().get(SKIP_VIEW_COUNT_ONCE);
+        Object skipOnceFromRequest = request.getAttribute(SKIP_VIEW_COUNT_ONCE);
+        boolean skipViewCount = asBoolean(skipOnceFromModel) || asBoolean(skipOnceFromRequest);
         boolean shouldIncreaseViewCount = !skipViewCount
                 && !hasRecentViewCookie(request, toiletId)
                 && !isViewRateLimited(clientKey(request), toiletId);
@@ -288,6 +370,16 @@ public class ReviewController {
     private String reviewsRedirectUrlWithoutCount(Long toiletId, RedirectAttributes redirectAttributes) {
         redirectAttributes.addFlashAttribute(SKIP_VIEW_COUNT_ONCE, true);
         return "redirect:/reviews?toiletId=" + toiletId;
+    }
+
+    private boolean asBoolean(Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value instanceof String s) {
+            return Boolean.parseBoolean(s);
+        }
+        return false;
     }
 
     private boolean hasRecentViewCookie(HttpServletRequest request, Long toiletId) {

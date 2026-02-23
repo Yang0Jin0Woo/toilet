@@ -26,6 +26,54 @@
         body { text-align: center; }
         table { margin: 0 auto; border-collapse: collapse; }
         .top-auth { max-width: 860px; margin: 20px auto 0; text-align: right; }
+        .review-table-wrap { width: 78%; margin: 0 auto; overflow-x: auto; }
+        .review-table {
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: separate;
+            border-spacing: 0;
+            border: 1px solid #e6e8eb;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+        }
+        .review-table thead th {
+            background: #f8f9fb;
+            color: #3f4652;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            padding: 10px 8px;
+            border-bottom: 1px solid #e6e8eb;
+            white-space: nowrap;
+        }
+        .review-table tbody td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #f0f2f5;
+            vertical-align: middle;
+            font-size: 14px;
+        }
+        .review-table tbody tr:last-child td { border-bottom: none; }
+        .col-rating { width: 16%; text-align: center; }
+        .col-review { width: 38%; text-align: left; }
+        .col-author { width: 14%; text-align: center; color: #4b5563; }
+        .col-date { width: 18%; text-align: center; color: #6b7280; }
+        .col-action { width: 14%; text-align: center; }
+        .review-comment {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-break: break-word;
+            line-height: 1.45;
+            text-align: left;
+        }
+        .action-group {
+            display: inline-flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
     </style>
 
     <script>
@@ -141,19 +189,28 @@
     <li class="empty">아직 등록된 리뷰가 없습니다. 의견을 남겨주세요.</li>
 </ul>
 
-<table style="width:60%; border-collapse:collapse;" th:unless="${#lists.isEmpty(reviews)}">
+<div class="review-table-wrap" th:unless="${#lists.isEmpty(reviews)}">
+<table class="review-table">
+    <colgroup>
+        <col class="col-rating">
+        <col class="col-review">
+        <col class="col-author">
+        <col class="col-date">
+        <col class="col-action">
+    </colgroup>
     <thead>
     <tr>
-        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">별점</th>
-        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">리뷰</th>
-        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">등록일</th>
-        <th style="border-bottom:1px solid #ccc; text-align:center; padding:6px;">관리</th>
+        <th>별점</th>
+        <th>리뷰</th>
+        <th>작성자</th>
+        <th>등록일</th>
+        <th>관리</th>
     </tr>
     </thead>
 
     <tbody>
     <tr th:each="rev : ${reviews}">
-        <td style="padding:6px;">
+        <td class="col-rating">
             <span class="stars" th:with="r=${rev.rating}">
                 <span class="star" th:each="i : ${#numbers.sequence(1,5)}"
                       th:classappend="${i <= r} ? ' filled' : ''"
@@ -161,18 +218,19 @@
             </span>
         </td>
 
-        <td style="padding:6px; text-align:left;">
-            <div th:text="${rev.comment ?: ''}">리뷰</div>
-            <small class="meta" th:if="${rev.ownerUsername != null and !#strings.isEmpty(rev.ownerUsername)}"
-                   th:text="|작성자: ${rev.ownerUsername}|">작성자</small>
+        <td class="col-review">
+            <div class="review-comment" th:text="${rev.comment ?: ''}">리뷰</div>
         </td>
 
-        <td style="padding:6px;">
+        <td class="col-author"
+            th:text="${rev.ownerUsername != null and !#strings.isEmpty(rev.ownerUsername) ? rev.ownerUsername : '-'}">-</td>
+
+        <td class="col-date">
             <small class="meta" th:text="${rev.createdAt}">2025-08-10 12:00</small>
         </td>
 
-        <td style="padding:6px; text-align:center;">
-            <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+        <td class="col-action">
+            <div class="action-group">
                 <button th:if="${rev.ownedByLoginUser}" type="button" class="btn btn-sm btn-outline-secondary"
                         th:attr="onclick=|toggleEdit(''+${rev.id})|">수정</button>
 
@@ -196,7 +254,7 @@
     </tr>
 
     <tr th:each="rev : ${reviews}" th:if="${rev.ownedByLoginUser}" th:id="|edit-row-${rev.id}|" style="display:none;">
-        <td colspan="4" style="background:#f9f9f9; padding:10px;">
+        <td colspan="5" style="background:#f9f9f9; padding:10px;">
             <form th:action="@{/reviews/update}" method="post" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                 <input type="hidden" name="reviewId" th:value="${rev.id}">
                 <input type="hidden" name="toiletId" th:value="${toilet.id}">
@@ -226,6 +284,7 @@
     </tr>
     </tbody>
 </table>
+</div>
 
 <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-sm modal-dialog-centered">

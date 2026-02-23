@@ -2,6 +2,8 @@ package com.example.toilet.controller;
 
 import com.example.toilet.domain.Review;
 import com.example.toilet.domain.Toilet;
+import com.example.toilet.domain.AppUser;
+import com.example.toilet.repository.AppUserRepository;
 import com.example.toilet.service.ReviewService;
 import com.example.toilet.service.ToiletService;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -10,6 +12,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -82,6 +85,7 @@ public class ReviewController {
 
     private final ReviewService reviewService;
     private final ToiletService toiletService;
+    private final AppUserRepository appUserRepository;
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final ZoneId DISPLAY_ZONE = ZoneId.of("Asia/Seoul");
@@ -254,9 +258,18 @@ public class ReviewController {
         if (error != null) model.addAttribute("errorMessage", error.toString());
         Object info = model.asMap().get("infoMessage");
         if (info != null) model.addAttribute("infoMessage", info.toString());
+        Long loginUserId = currentUserId(request.getSession(false));
+        String loginUsername = currentUsername(request.getSession(false));
 
-        double avg = reviewService.averageForToilet(toiletId);
-        var raw = reviewService.findByToilet(toiletId);
+        double avg = 0.0;
+        List<Review> raw = List.of();
+        try {
+            avg = reviewService.averageForToilet(toiletId);
+            raw = reviewService.findByToilet(toiletId);
+        } catch (Exception e) {
+            log.error("리뷰 로딩 실패. toiletId={}", toiletId, e);
+            model.addAttribute("warnMessage", "리뷰 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+        }
 
         List<Map<String, Object>> list = raw.stream()
                 .map(r -> {
@@ -270,6 +283,10 @@ public class ReviewController {
                                     .format(FMT)
                             : "");
                     m.put("reportCount", r.getReportCount());
+                    Long ownerId = r.getUser() == null ? null : r.getUser().getId();
+                    m.put("ownerId", ownerId);
+                    m.put("ownerUsername", r.getUser() == null ? "" : r.getUser().getUsername());
+                    m.put("ownedByLoginUser", loginUserId != null && loginUserId.equals(ownerId));
                     return m;
                 })
                 .collect(Collectors.toList());
@@ -278,6 +295,9 @@ public class ReviewController {
         model.addAttribute("avgRating", avg);
         model.addAttribute("reviews", list);
         model.addAttribute("pageViewCount", pageViewCount);
+        model.addAttribute("isLoggedIn", loginUserId != null);
+        model.addAttribute("loginUsername", loginUsername);
+        model.addAttribute("loginRedirect", "/reviews?toiletId=" + toiletId);
 
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
         log.info("마커→리뷰 이동 소요: {} ms (toiletId={}, 리뷰수={})",
@@ -290,6 +310,11 @@ public class ReviewController {
                          org.springframework.validation.BindingResult bindingResult,
                          RedirectAttributes redirectAttributes,
                          HttpServletRequest request) {
+        Long loginUserId = currentUserId(request.getSession(false));
+        if (loginUserId == null) {
+            redirectAttributes.addFlashAttribute("errorMessage", "리뷰 작성은 로그인 후 가능합니다.");
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
+        }
 
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
@@ -306,9 +331,12 @@ public class ReviewController {
 
         Toilet toilet = toiletService.findById(form.getToiletId())
                 .orElseThrow(() -> new IllegalArgumentException("Invalid toiletId: " + form.getToiletId()));
+        AppUser user = appUserRepository.findById(loginUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid userId: " + loginUserId));
 
         Review r = new Review();
         r.setToilet(toilet);
+        r.setUser(user);
         r.setRating(form.getRating());
         r.setComment(form.getComment());
         reviewService.save(r);
@@ -322,6 +350,11 @@ public class ReviewController {
                          org.springframework.validation.BindingResult bindingResult,
                          RedirectAttributes redirectAttributes,
                          HttpServletRequest request) {
+        Long loginUserId = currentUserId(request.getSession(false));
+        if (loginUserId == null) {
+            redirectAttributes.addFlashAttribute("errorMessage", "로그인 후 수정할 수 있습니다.");
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
+        }
         if (bindingResult.hasErrors()) {
             redirectAttributes.addFlashAttribute("errorMessage", "입력값을 확인해주세요. 별점은 1~5, 리뷰는 1000자 이내입니다.");
             return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
@@ -335,7 +368,12 @@ public class ReviewController {
             return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
         }
 
-        reviewService.update(form.getReviewId(), form.getRating(), form.getComment());
+        try {
+            reviewService.updateOwned(form.getReviewId(), form.getRating(), form.getComment(), loginUserId);
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("errorMessage", "본인이 작성한 리뷰만 수정할 수 있습니다.");
+            return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
+        }
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 수정되었습니다.");
         return reviewsRedirectUrlWithoutCount(form.getToiletId(), redirectAttributes);
     }
@@ -343,8 +381,19 @@ public class ReviewController {
     @PostMapping("/reviews/delete")
     public String delete(@RequestParam("reviewId") Long reviewId,
                          @RequestParam("toiletId") Long toiletId,
-                         RedirectAttributes redirectAttributes) {
-        reviewService.delete(reviewId);
+                         RedirectAttributes redirectAttributes,
+                         HttpServletRequest request) {
+        Long loginUserId = currentUserId(request.getSession(false));
+        if (loginUserId == null) {
+            redirectAttributes.addFlashAttribute("errorMessage", "로그인 후 삭제할 수 있습니다.");
+            return reviewsRedirectUrlWithoutCount(toiletId, redirectAttributes);
+        }
+        try {
+            reviewService.deleteOwned(reviewId, loginUserId);
+        } catch (IllegalArgumentException e) {
+            redirectAttributes.addFlashAttribute("errorMessage", "본인이 작성한 리뷰만 삭제할 수 있습니다.");
+            return reviewsRedirectUrlWithoutCount(toiletId, redirectAttributes);
+        }
         redirectAttributes.addFlashAttribute("infoMessage", "리뷰가 삭제되었습니다.");
         return reviewsRedirectUrlWithoutCount(toiletId, redirectAttributes);
     }
@@ -454,5 +503,34 @@ public class ReviewController {
             }
         }
         return result;
+    }
+
+    private Long currentUserId(HttpSession session) {
+        if (session == null) {
+            return null;
+        }
+        Object value = session.getAttribute(SessionKeys.LOGIN_USER_ID);
+        if (value instanceof Long v) {
+            return v;
+        }
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s) {
+            try {
+                return Long.parseLong(s);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String currentUsername(HttpSession session) {
+        if (session == null) {
+            return null;
+        }
+        Object value = session.getAttribute(SessionKeys.LOGIN_USERNAME);
+        return value == null ? null : value.toString();
     }
 }

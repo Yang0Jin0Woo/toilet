@@ -41,7 +41,11 @@
  
 - 인포윈도우에서 평균 평점/리뷰 수 표시 및 리뷰 페이지 이동
 
+- 세션 기반 로그인/회원가입/로그아웃/회원탈퇴
+
 - 리뷰 등록/수정/삭제, 신고 누적 차단
+  - 리뷰 작성은 로그인 사용자만 가능
+  - 리뷰 수정/삭제는 본인 작성 리뷰만 가능
 - 데이터 상태 배너
   - 지도 오른쪽 상단: 로딩/성공/실패 및 화장실 수(줌 반영)
   - 지도 왼쪽 상단: 마커 색상(남/여/장애인/기타) 안내
@@ -55,6 +59,16 @@
  
 - `GET /reviews?toiletId={id}`: 특정 화장실 리뷰 목록/작성 화면
  
+- `GET /signup`: 회원가입 화면
+
+- `POST /signup`: 회원가입
+
+- `POST /login`: 로그인
+
+- `POST /logout`: 로그아웃
+
+- `POST /account/delete`: 회원탈퇴(비밀번호 확인)
+
 - `POST /reviews`: 리뷰 등록
  
 - `POST /reviews/update`: 리뷰 수정
@@ -79,15 +93,18 @@ src
  │   │   ├─ ToiletApplication.java
  │   │   ├─ controller
  │   │   │   ├─ MapController.java
+ │   │   │   ├─ AuthController.java
  │   │   │   ├─ ReviewController.java
  │   │   │   └─ ToiletController.java
  │   │   ├─ dto
  │   │   │   ├─ ToiletSnapshot.java
  │   │   │   └─ ToiletView.java
  │   │   ├─ domain
+ │   │   │   ├─ AppUser.java
  │   │   │   ├─ Review.java
  │   │   │   └─ Toilet.java
  │   │   ├─ repository
+ │   │   │   ├─ AppUserRepository.java
  │   │   │   ├─ ReviewRepository.java
  │   │   │   └─ ToiletRepository.java
  │   │   └─ service
@@ -100,6 +117,7 @@ src
  │       ├─ static
  │       │   └─ seoultoilet.json
  │       └─ templates
+ │           ├─ signup.html
  │           └─ map
  │               ├─ map.html
  │               ├─ map_benchmark.html
@@ -136,6 +154,16 @@ src
 - 리뷰 작성 폼과 등록/취소 버튼 제공.
 
 - 리뷰 목록 표 표시.
+
+- 우측 상단 로그인 링크 클릭 시 작은 로그인 모달 표시, 하단 회원가입 링크로 `signup.html` 이동.
+
+- 로그인 상태에서는 로그아웃/회원탈퇴 버튼 표시.
+
+### 3) 회원가입 화면 (`/signup`)
+
+- 아이디/이메일/비밀번호/비밀번호 확인 입력 후 가입.
+
+- 가입 완료 시 자동 로그인되고 기존 리뷰 화면으로 복귀.
 
 
 ## 데이터 초기화
@@ -253,6 +281,21 @@ src
     - 문제: 페이지 전환/bfcache에서 SSE·Geolocation 잔존으로 리소스 누적
     - 해결: 페이지당 SSE 1개만 유지, `pagehide/visibilitychange`에서 close/clearWatch 수행
     - 결과: 백그라운드 잔존 작업 제거로 지연 재발 가능성 감소
+
+- 세션 기반 로그인 적용 후 500 오류 개선
+  - 문제: 로그인/회원가입 도입 후 리뷰 페이지 진입과 회원가입에서 500 오류가 발생
+    - `app_user`/`review` 스키마와 애플리케이션 엔티티 간 컬럼 불일치(`username`, `email`, `user_id`)로 SQLGrammarException 발생
+    - 회원가입 시 `app_user.email NOT NULL` 조건이 있는데 저장값 누락으로 insert 실패
+    - 폼 검증 실패가 `ConstraintViolationException`으로 전파되어 500으로 노출되는 케이스 존재
+  - 해결:
+    - 시작 시점 스키마 보정 로직 추가: 누락 테이블/컬럼/인덱스/FK 자동 점검 및 보완
+    - 회원가입 폼/엔티티/저장 로직에 `email` 필드를 일치시켜 NOT NULL 제약 충족
+    - 회원가입 검증 흐름을 `BindingResult` 기반으로 정리해 유효성 오류를 400/폼 메시지로 처리
+    - 리뷰 로딩 구간에 예외 방어를 추가해 장애 시에도 페이지 렌더링을 유지
+  - 결과:
+    - 마커 클릭 후 리뷰 페이지 진입 시 500 재현이 해소되고 HTTP 200으로 정상 응답
+    - 회원가입 요청이 DB 제약을 충족하며 정상 완료(자동 로그인/복귀 동작 포함)
+    - 인증 기능 추가 이후에도 기존 지도/리뷰 핵심 플로우를 유지하면서 안정성을 강화
 
 
 

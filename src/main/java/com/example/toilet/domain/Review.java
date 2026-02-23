@@ -21,6 +21,10 @@ public class Review {
     @JoinColumn(name = "toilet_id")
     private Toilet toilet;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private AppUser user;
+
     @Min(1) @Max(5)
     @Column(nullable = false)
     private Integer rating;           // 1~5

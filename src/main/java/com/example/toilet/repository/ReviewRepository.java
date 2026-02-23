@@ -13,6 +13,7 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     @Query("""
            select r
            from Review r
+           left join fetch r.user u
            where r.toilet.id = :toiletId
              and (r.blocked = false or r.blocked is null)
            order by r.id desc

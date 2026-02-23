@@ -1,6 +1,7 @@
 package com.example.toilet.service;
 
 import com.example.toilet.domain.Review;
+import com.example.toilet.domain.AppUser;
 import com.example.toilet.repository.ReviewRepository;
 import com.example.toilet.repository.ToiletRepository;
 import lombok.AllArgsConstructor;
@@ -41,6 +42,9 @@ public class ReviewService {
         if (r == null || r.getToilet() == null || r.getToilet().getId() == null) {
             throw new IllegalArgumentException("toiletId is required");
         }
+        if (r.getUser() == null || r.getUser().getId() == null) {
+            throw new IllegalArgumentException("userId is required");
+        }
         if (r.getRating() == null) {
             throw new IllegalArgumentException("rating is required");
         }
@@ -54,8 +58,14 @@ public class ReviewService {
 
     @Transactional
     public Review update(Long reviewId, int newRating, String newComment) {
+        return updateOwned(reviewId, newRating, newComment, null);
+    }
+
+    @Transactional
+    public Review updateOwned(Long reviewId, int newRating, String newComment, Long loginUserId) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
+        validateOwnership(review, loginUserId);
         Long toiletId = review.getToilet() == null ? null : review.getToilet().getId();
         if (toiletId == null) {
             throw new IllegalStateException("toiletId is required for reviewId: " + reviewId);
@@ -70,8 +80,14 @@ public class ReviewService {
 
     @Transactional
     public void delete(Long reviewId) {
+        deleteOwned(reviewId, null);
+    }
+
+    @Transactional
+    public void deleteOwned(Long reviewId, Long loginUserId) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid reviewId: " + reviewId));
+        validateOwnership(review, loginUserId);
         Long toiletId = review.getToilet() == null ? null : review.getToilet().getId();
         if (toiletId == null) {
             throw new IllegalStateException("toiletId is required for reviewId: " + reviewId);
@@ -180,5 +196,15 @@ public class ReviewService {
     private static final class TxAfterCommitActions {
         private final Set<Long> pendingToiletIds = new LinkedHashSet<>();
         private boolean evictListCache;
+    }
+
+    private void validateOwnership(Review review, Long loginUserId) {
+        AppUser owner = review.getUser();
+        if (owner == null || owner.getId() == null) {
+            throw new IllegalArgumentException("review owner missing: " + review.getId());
+        }
+        if (loginUserId == null || !owner.getId().equals(loginUserId)) {
+            throw new IllegalArgumentException("No permission for reviewId: " + review.getId());
+        }
     }
 }

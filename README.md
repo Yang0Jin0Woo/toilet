@@ -4,16 +4,29 @@
 
 ## 스크린샷
 
+### 1) 지도 메인 화면
 <p align="center">
-    <img src="img.png" alt="지도 메인 화면" width="85%">
+  <img src="/img/img.png" alt="지도 메인 화면" width="85%">
 </p>
 
+### 2) 로그인 전 리뷰 페이지
 <p align="center">
-    <img src="review.png" alt="인포윈도우 + 리뷰 요약" width="85%">
+  <img src="/img/beforelogin.png" alt="로그인 이전 리뷰 페이지" width="85%">
 </p>
 
+### 3) 회원가입 화면
 <p align="center">
-    <img src="reviewupdate.png" alt="리뷰 목록/작성 화면" width="85%">
+  <img src="/img/signup.png" alt="회원가입" width="85%">
+</p>
+
+### 4) 로그인 후 리뷰 페이지
+<p align="center">
+  <img src="/img/afterloginreviewlise.png" alt="로그인 이후 리뷰 페이지" width="85%">
+</p>
+
+### 5) 리뷰 목록
+<p align="center">
+  <img src="/img/reviews.png" alt="리뷰 목록" width="85%">
 </p>
 
 ---

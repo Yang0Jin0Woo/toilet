@@ -105,6 +105,7 @@
     </span>
     <a href="#" th:if="${!isLoggedIn}" data-bs-toggle="modal" data-bs-target="#loginModal">로그인</a>
     <form th:if="${isLoggedIn}" th:action="@{/logout}" method="post" style="display:inline;">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
         <input type="hidden" name="redirect" th:value="${loginRedirect}">
         <button type="submit" class="btn btn-link p-0 align-baseline">로그아웃</button>
     </form>
@@ -162,6 +163,7 @@
 
 <div id="reviewFormDiv" style="display:none; margin:20px auto; padding:16px; border:1px solid #ccc; border-radius:8px; text-align:center; width:fit-content;">
     <form th:action="@{/reviews}" method="post">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
         <input type="hidden" name="toiletId" th:value="${toilet.id}"/>
 
         <div class="star-rating" aria-label="별점 선택">
@@ -235,12 +237,14 @@
                         th:attr="onclick=|toggleEdit(''+${rev.id})|">수정</button>
 
                 <form th:if="${rev.ownedByLoginUser}" th:action="@{/reviews/delete}" method="post" style="display:inline;">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                     <input type="hidden" name="reviewId" th:value="${rev.id}">
                     <input type="hidden" name="toiletId" th:value="${toilet.id}">
                     <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
                 </form>
 
                 <form th:action="@{/reviews/report}" method="post" style="display:inline;">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                     <input type="hidden" name="reviewId" th:value="${rev.id}">
                     <input type="hidden" name="toiletId" th:value="${toilet.id}">
                     <button type="submit" class="btn btn-sm btn-outline-warning">신고</button>
@@ -256,6 +260,7 @@
     <tr th:each="rev : ${reviews}" th:if="${rev.ownedByLoginUser}" th:id="|edit-row-${rev.id}|" style="display:none;">
         <td colspan="5" style="background:#f9f9f9; padding:10px;">
             <form th:action="@{/reviews/update}" method="post" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                 <input type="hidden" name="reviewId" th:value="${rev.id}">
                 <input type="hidden" name="toiletId" th:value="${toilet.id}">
 
@@ -295,6 +300,7 @@
             </div>
             <div class="modal-body text-start">
                 <form th:action="@{/login}" method="post">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                     <input type="hidden" name="redirect" th:value="${loginRedirect}">
                     <div class="mb-2">
                         <label for="loginUsername" class="form-label mb-1">아이디</label>
@@ -324,6 +330,7 @@
             <div class="modal-body text-start">
                 <p class="small text-danger mb-2">탈퇴하면 계정 정보가 삭제됩니다.</p>
                 <form th:action="@{/account/delete}" method="post">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                     <input type="hidden" name="redirect" th:value="${loginRedirect}">
                     <div class="mb-2">
                         <label for="deleteAccountPassword" class="form-label mb-1">비밀번호 확인</label>

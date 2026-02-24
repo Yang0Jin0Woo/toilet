@@ -24,6 +24,7 @@
                 </div>
 
                 <form th:action="@{/signup}" method="post" th:object="${signupForm}">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                     <input type="hidden" name="redirect" th:value="${redirect}"/>
 
                     <div class="mb-3">

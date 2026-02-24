@@ -125,6 +125,7 @@ public class AuthController {
         }
 
         HttpSession session = request.getSession(true);
+        request.changeSessionId();
         session.setAttribute(SessionKeys.LOGIN_USER_ID, userOpt.get().getId());
         session.setAttribute(SessionKeys.LOGIN_USERNAME, userOpt.get().getUsername());
         redirectAttributes.addFlashAttribute("infoMessage", "로그인되었습니다.");

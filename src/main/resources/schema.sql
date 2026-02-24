@@ -1,14 +1,14 @@
--- ?붿옣??
+-- 화장실
 CREATE TABLE IF NOT EXISTS toilet (
     id           BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     conts_name   VARCHAR(255),
     addr_new     VARCHAR(255),
     addr_old     VARCHAR(255),
-    coord_x      DOUBLE,             -- 寃쎈룄(x)
-    coord_y      DOUBLE,             -- ?꾨룄(y)
-    value04      VARCHAR(64),        -- ?????μ븷/湲고?
+    coord_x      DOUBLE,             -- 경도(x)
+    coord_y      DOUBLE,             -- 위도(y)
+    value04      VARCHAR(64),        -- 남녀/장애인/기타
     value05      VARCHAR(64),
-    external_id  VARCHAR(64) NOT NULL,  -- ?낆꽌???먯뿰???먯뿰???댁떆/怨좎쑀媛????
+    external_id  VARCHAR(64) NOT NULL,  -- 원본 데이터 기반 고유 키
     rating_sum   BIGINT NOT NULL DEFAULT 0,
     rating_count BIGINT NOT NULL DEFAULT 0,
     version      BIGINT NOT NULL DEFAULT 0,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS app_user (
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_general_ci;
 
--- 由щ럭
+-- 리뷰
 CREATE TABLE IF NOT EXISTS review (
     id          BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     toilet_id   BIGINT NOT NULL,

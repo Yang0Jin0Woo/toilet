@@ -88,6 +88,27 @@
 
 - `POST /reviews/delete`: 리뷰 삭제
 
+## 보안 경계 정책
+
+- `permitAll` (공개 접근)
+  - 정적 리소스, 이미지
+  - 공개 조회 GET: `/`, `/map`, `/map-benchmark`, `/reviews`, `/signup`, `/toilets`, `/sse/ratings`
+  - 인증 진입 POST: `/login`, `/signup`
+- `authenticated` (로그인 필요)
+  - 위 공개/차단 정책 외 나머지 모든 엔드포인트
+  - 예: 리뷰 등록/수정/삭제/신고, 로그아웃, 회원탈퇴
+- `denyAll` (완전 차단)
+  - 민감/미정 경로: `/admin/**`, `/internal/**`, `/debug/**`
+
+## 중복 방지 전략
+
+- 회원가입 중복 방지
+  - DB 제약: `app_user.email` 유니크 인덱스(`ux_app_user_email`)
+  - 애플리케이션 처리: 저장 시 `DataIntegrityViolationException`을 잡아 사용자 메시지로 변환
+- 동시 가입 경쟁 조건 대응
+  - 사전 중복 조회(`existsByEmail`) + DB 유니크 제약으로 최종 보장
+  - 중복 데이터가 이미 존재할 경우 마이그레이션 단계에서 fail-fast 처리
+
 
 ## 아키텍처 구조
 
@@ -104,10 +125,16 @@ src
  ├─ main
  │   ├─ java/com/example/toilet
  │   │   ├─ ToiletApplication.java
+ │   │   ├─ config
+ │   │   │   ├─ SchemaMigrationRunner.java
+ │   │   │   └─ SecurityConfig.java
  │   │   ├─ controller
- │   │   │   ├─ MapController.java
  │   │   │   ├─ AuthController.java
+ │   │   │   ├─ GlobalExceptionHandler.java
+ │   │   │   ├─ MapController.java
+ │   │   │   ├─ RedirectSanitizer.java
  │   │   │   ├─ ReviewController.java
+ │   │   │   ├─ SessionKeys.java
  │   │   │   └─ ToiletController.java
  │   │   ├─ dto
  │   │   │   ├─ ToiletSnapshot.java
@@ -121,6 +148,7 @@ src
  │   │   │   ├─ ReviewRepository.java
  │   │   │   └─ ToiletRepository.java
  │   │   └─ service
+ │   │       ├─ RatingSseService.java
  │   │       ├─ ReviewService.java
  │   │       └─ ToiletService.java
  │   └─ resources
@@ -135,14 +163,6 @@ src
  │               ├─ map.html
  │               ├─ map_benchmark.html
  │               └─ reviews.html
- └─ test
-     └─ java/com/example/toilet
-         ├─ DtoProjectionComparisonTest.java
-         ├─ GroupAggComparisonTest.java
-         ├─ GroupCacheComparisonTest.java
-         ├─ ReviewPageViewConcurrencyTest.java
-         ├─ SlowQueryTestConfig.java
-         └─ ToiletApplicationTests.java
 ```
 
 - `dto`
@@ -313,7 +333,7 @@ src
 - 세션 기반 인증 보안 강화(CSRF/세션 고정 공격 방어)
   - 문제: 세션 기반 인증을 사용하면서 모든 POST 요청에 대한 위조 요청 방어(CSRF)와 로그인 시 세션 재사용 방어가 명시적으로 적용되지 않아 보안 리스크 존재
   - 해결:
-    - `spring-boot-starter-security`를 도입하되 기존 동작 호환을 위해 엔드포인트 접근 정책은 `permitAll`로 유지
+    - `spring-boot-starter-security`를 도입하고 공개 경로는 `permitAll`, 나머지는 `authenticated`, 민감/미정 경로는 `denyAll`로 분리
     - 커스텀 `SecurityFilterChain`을 추가해 기본 폼 로그인/HTTP Basic/기본 로그아웃 필터를 비활성화하고, CSRF 보호는 활성화
     - 회원가입/로그인/로그아웃/회원탈퇴/리뷰 등록·수정·삭제·신고 등 모든 POST 폼에 CSRF 토큰 hidden 필드 추가
     - 로그인 성공 시 `request.changeSessionId()`를 호출해 세션 ID를 재발급

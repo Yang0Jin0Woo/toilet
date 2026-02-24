@@ -13,10 +13,9 @@ import java.util.Set;
 
 @ControllerAdvice(annotations = Controller.class)
 public class GlobalExceptionHandler {
-    private static final Set<String> ALLOWED_REDIRECT_PREFIXES = Set.of("/", "/map", "/reviews", "/signup");
 
-    private static final String CONFLICT_MESSAGE =
-            "?ㅻⅨ ?ъ슜?먭? 癒쇱? ?섏젙?덉뒿?덈떎. 理쒖떊 ?댁슜???ㅼ떆 遺덈윭? 二쇱꽭??";
+    private static final Set<String> ALLOWED_REDIRECT_PREFIXES = Set.of("/", "/map", "/reviews", "/signup");
+    private static final String CONFLICT_MESSAGE = "다른 사용자가 먼저 수정했습니다. 최신 내용을 다시 불러와 주세요.";
 
     @ExceptionHandler({
             OptimisticLockException.class,

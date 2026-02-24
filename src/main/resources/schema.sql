@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS app_user (
     password_hash VARCHAR(100) NOT NULL,
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    UNIQUE KEY ux_app_user_username (username)
+    UNIQUE KEY ux_app_user_username (username),
+    UNIQUE KEY ux_app_user_email (email)
 ) ENGINE=InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_general_ci;

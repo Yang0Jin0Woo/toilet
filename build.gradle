@@ -47,3 +47,7 @@ tasks.named('test') {
 	useJUnitPlatform()
 	jvmArgs "-Xlog:gc*:file=build/gc-test.log:time,uptime,level,tags"
 }
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+}

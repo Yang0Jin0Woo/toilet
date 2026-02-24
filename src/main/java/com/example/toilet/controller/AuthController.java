@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -223,7 +224,14 @@ public class AuthController {
         user.setUsername(username);
         user.setEmail(email);
         user.setPasswordHash(passwordEncoder.encode(form.getPassword()));
-        AppUser saved = appUserRepository.save(user);
+        AppUser saved;
+        try {
+            saved = appUserRepository.save(user);
+        } catch (DataIntegrityViolationException e) {
+            redirectAttributes.addFlashAttribute("signupForm", form);
+            redirectAttributes.addFlashAttribute("errorMessage", "이미 사용 중인 이메일입니다.");
+            return "redirect:/signup?redirect=" + URLEncoder.encode(target, StandardCharsets.UTF_8);
+        }
 
         HttpSession session = request.getSession(true);
         session.setAttribute(SessionKeys.LOGIN_USER_ID, saved.getId());

@@ -233,13 +233,7 @@ public class AuthController {
     }
 
     private String safeRedirect(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return DEFAULT_REDIRECT;
-        }
-        if (!raw.startsWith("/") || raw.startsWith("//")) {
-            return DEFAULT_REDIRECT;
-        }
-        return raw;
+        return RedirectSanitizer.toSafePath(raw, DEFAULT_REDIRECT);
     }
 
     private Long currentUserId(HttpSession session) {

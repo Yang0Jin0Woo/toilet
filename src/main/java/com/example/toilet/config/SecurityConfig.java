@@ -35,7 +35,7 @@ public class SecurityConfig {
                         .requestMatchers(PathRequest.toStaticResources().atCommonLocations()).permitAll()
                         .requestMatchers("/img/**").permitAll()
                         .requestMatchers("/error", "/error/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/", "/map", "/map-benchmark", "/reviews", "/signup", "/toilets", "/sse/ratings").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/", "/map", "/map-benchmark", "/reviews", "/signup", "/toilets", "/sse/ratings", "/seoultoilet.json").permitAll()
                         .requestMatchers(HttpMethod.POST, "/login", "/signup").permitAll()
                         .requestMatchers("/admin/**", "/internal/**", "/debug/**").denyAll()
                         .anyRequest().authenticated()
